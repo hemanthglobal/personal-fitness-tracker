@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+# Never commit personal data exports
+fitness-tracker-backup-*.json
+supabase/.temp/
+supabase/.branches/

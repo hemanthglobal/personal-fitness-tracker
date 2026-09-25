@@ -1,0 +1,3 @@
+-- Intentionally empty.
+-- The programme definition lives in src/data/workout-data.ts and the only reference data
+-- (exercise codes) is created by migration 0001. Never seed personal workout data here.
