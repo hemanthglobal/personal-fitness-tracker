@@ -30,6 +30,8 @@ export function renderSettings(): string {
       <fieldset class="field"><legend>Weight unit</legend>${segmented("weightUnit", s.weightUnit, [["kg", "kg"], ["lb", "lb"]])}
         <p class="field__help">Existing logs are converted for display.</p></fieldset>
       <fieldset class="field"><legend>Theme</legend>${segmented("theme", s.theme, [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</fieldset>
+      <fieldset class="field"><legend>Timer sounds</legend>${segmented("sound", s.sound ? "on" : "off", [["on", "On"], ["off", "Off"]])}
+        <p class="field__help">Beeps for warm-up, stretching and the end of your rest. The screen stays on while a timer runs.</p></fieldset>
     </section>
 
     <h2 class="section__title section__title--spaced">Your data</h2>

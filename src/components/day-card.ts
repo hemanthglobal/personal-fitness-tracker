@@ -1,6 +1,7 @@
 import { getSchedule, INTENSITY, REST_ACTIVITIES, TOTAL_DAYS } from "../data/workout-data";
 import { dateForDay, dayStatus, isDayComplete } from "../lib/state";
 import { esc, fmtDate } from "../lib/utils";
+import { routineMinutes, STRETCHES } from "../data/routines";
 import { ICON } from "./icons";
 import { pill, restPill } from "./ui";
 
@@ -18,6 +19,7 @@ export function restHero(day: number, eyebrow: string, title?: string) {
       <p class="hero__meta">Active rest is recommended. Options from the programme:</p>
       <ul class="chips chips--on-dark">${REST_ACTIVITIES.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>
       ${restButton(day, "btn--lg")}
+      <a class="hero__link" href="#/session/stretch/full/${day}">${ICON.leaf}<span>Full-body stretch · ${routineMinutes(STRETCHES.full)} min guided</span>${ICON.chevron}</a>
     </section>`;
 }
 

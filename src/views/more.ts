@@ -12,6 +12,7 @@ export function renderMore(): string {
     ${pageHeader("More")}
     <ul class="card list-rows">
       ${listLink("#/weight", ICON.scale, "Body weight", n ? plural(n, "entry", "entries") : "Optional log")}
+      ${listLink("#/routines", ICON.timer, "Warm-up & stretching", "Guided timers for every workout")}
       ${listLink("#/about", ICON.info, "Programme guide", "How the 60 days work")}
     </ul>
     <h2 class="section__title section__title--spaced">Reference</h2>

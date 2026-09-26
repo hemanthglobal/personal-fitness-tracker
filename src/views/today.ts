@@ -1,6 +1,7 @@
 import { getSchedule, getTargetReps, INTENSITY, TOTAL_DAYS } from "../data/workout-data";
 import type { WorkoutSchedule } from "../types/workout";
 import { restHero, upcomingList } from "../components/day-card";
+import { routineMinutes, WARMUPS } from "../data/routines";
 import { ICON } from "../components/icons";
 import { emptyState, pageHeader, pill, progressBar } from "../components/ui";
 import { completedCount, currentDay, dayStatus, findPrevious, fmtSet, isDayComplete, store, workoutProgress, type SetLog } from "../lib/state";
@@ -74,6 +75,7 @@ export function renderToday(): string {
       <p class="hero__meta">${plural(sched.exercises.length, "exercise")} · ${I.tempo.toLowerCase()} · ${I.rest}</p>
       ${started && !done ? `<div class="hero__progress">${progressBar(prog.setsDone, prog.setsTotal, "Sets done today")}<span>${prog.setsDone}/${prog.setsTotal} sets</span></div>` : ""}
       ${cta}
+      ${done ? "" : `<a class="hero__link" href="#/session/warmup/${sched.workout}/${day}">${ICON.play}<span>Warm up first · ${routineMinutes(WARMUPS[sched.workout])} min guided</span>${ICON.chevron}</a>`}
     </section>
     ${missedNote}
     ${lastTimeCard(sched)}

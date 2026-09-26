@@ -21,5 +21,11 @@ export const ICON = {
   cloud: svg('<path d="M7 18.5a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9a4.8 4.8 0 0 1-.6 9.5z"/>'),
   cloudOff: svg('<path d="M7 18.5a4.5 4.5 0 0 1-.6-9M9.5 5.6A6 6 0 0 1 18 9a4.8 4.8 0 0 1 2.3 8.3M3 3l18 18"/>'),
   play: svg('<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z"/>'),
+  pause: svg('<path d="M9 6v12M15 6v12"/>'),
+  playSolid: svg('<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>'),
+  skipNext: svg('<path d="M6 6l8 6-8 6zM17 6v12"/>'),
+  skipBack: svg('<path d="M18 6l-8 6 8 6zM7 6v12"/>'),
+  soundOn: svg('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  soundOff: svg('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM16 9.5l5 5M21 9.5l-5 5"/>'),
   refresh: svg('<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4.5V11h-6.5"/>'),
 };

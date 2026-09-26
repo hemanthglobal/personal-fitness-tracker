@@ -20,7 +20,7 @@ export interface BodyWeightEntry { date: string; weight: number /* kg */; notes:
 export interface AppState {
   version: number;
   onboarded: boolean;
-  settings: { startDate: string; weightUnit: WeightUnit; theme: Theme };
+  settings: { startDate: string; weightUnit: WeightUnit; theme: Theme; /** Timer beeps (local only). */ sound: boolean };
   days: Record<number, DayState>;
   /** day -> exercise code -> log */
   workouts: Record<number, Record<string, ExerciseLog>>;
@@ -33,7 +33,7 @@ export function defaultState(): AppState {
   return {
     version: STATE_VERSION,
     onboarded: false,
-    settings: { startDate: todayISO(), weightUnit: "kg", theme: "system" },
+    settings: { startDate: todayISO(), weightUnit: "kg", theme: "system", sound: true },
     days: {},
     workouts: {},
     bodyWeight: [],
@@ -57,6 +57,7 @@ export function normalizeState(raw: unknown): AppState {
   s.settings.startDate = settings.startDate as string;
   s.settings.weightUnit = settings.weightUnit === "lb" ? "lb" : "kg";
   s.settings.theme = settings.theme === "light" || settings.theme === "dark" ? settings.theme : "system";
+  s.settings.sound = settings.sound !== false;
 
   for (const [k, v] of Object.entries(raw.days)) {
     const n = Number(k);

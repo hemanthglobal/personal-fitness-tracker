@@ -2,6 +2,9 @@
 import { getSchedule, INTENSITY, VIDEO_URL } from "../data/workout-data";
 import type { Exercise, WorkoutSchedule } from "../types/workout";
 import { restHero } from "../components/day-card";
+import { routineMinutes, STRETCHES, WARMUPS, type Routine } from "../data/routines";
+import { cue, unlockAudio } from "../lib/sound";
+import { holdScreenOn } from "../lib/wake-lock";
 import { exerciseCard, exerciseStatus } from "../components/exercise-card";
 import { ICON } from "../components/icons";
 import { toast } from "../components/toast";
@@ -70,7 +73,9 @@ function workoutView(sched: WorkoutSchedule, eyebrow: string) {
           aria-label="Programme video trainer (opens in a new tab)">${ICON.play}<span>Programme video trainer</span>${ICON.link}</a>
         <p class="muted">Breathing cues are general tips, not part of the programme PDF.</p>
       </div>
+      ${routineCard(WARMUPS[sched.workout], day, "Before you start")}
       <div class="exercises">${body}</div>
+      ${routineCard(STRETCHES[sched.workout], day, "After your last set")}
       <div class="actionbar" id="actionbar">
         <div class="actionbar__inner">
           <div class="actionbar__info" id="ab-info">${actionInfo(sched)}</div>
@@ -80,6 +85,16 @@ function workoutView(sched: WorkoutSchedule, eyebrow: string) {
         </div>
       </div>
     </div>`;
+}
+
+/** Entry to a guided warm-up / stretch session (general routine, not from the PDF). */
+function routineCard(r: Routine, day: number, when: string) {
+  return `<a class="routine-card routine-card--${r.kind}" href="#/session/${r.kind}/${r.key}/${day}">
+    <span class="routine-card__icon">${r.kind === "warmup" ? ICON.play : ICON.leaf}</span>
+    <span class="routine-card__text"><small>${when}</small><strong>${r.kind === "warmup" ? "Warm-up" : "Cool-down stretch"} · ${routineMinutes(r)} min</strong>
+      <span>${plural(r.moves.length, "move")} · guided timer</span></span>
+    ${ICON.chevron}
+  </a>`;
 }
 
 function actionInfo(sched: WorkoutSchedule) {
@@ -226,9 +241,11 @@ export function refreshActionBar() {
 
 /* ---------- Rest timer: counts up; shows the source's rest target. ---------- */
 let timer: ReturnType<typeof setInterval> | null = null;
+let releaseScreen: (() => void) | null = null;
 
 function startRestTimer(sched: WorkoutSchedule) {
   stopRestTimer();
+  unlockAudio(); // called from the set-tick tap, so the end-of-rest beep is allowed
   const info = $("#ab-info");
   if (!info) return;
   const started = Date.now();
@@ -236,11 +253,13 @@ function startRestTimer(sched: WorkoutSchedule) {
   const tick = () => {
     const sec = Math.floor((Date.now() - started) / 1000);
     const mm = Math.floor(sec / 60), ss = String(sec % 60).padStart(2, "0");
+    if (sec === I.restSeconds) cue.go(store.state.settings.sound); // rest target reached
     info.innerHTML = `<button class="rest-chip ${sec >= I.restSeconds ? "is-over" : ""}" data-action="stop-timer"
       aria-label="Rest ${mm} minutes ${ss} seconds. Target ${I.restTarget}. Tap to dismiss.">
       ${ICON.timer}<span class="rest-chip__stack"><span class="rest-chip__time">${mm}:${ss}</span><small>Rest · ${I.restTarget}</small></span>${ICON.close}</button>`;
   };
   timer = setInterval(tick, 1000);
+  releaseScreen = holdScreenOn(); // keep the screen on while resting
   tick();
 }
 
@@ -254,6 +273,8 @@ function showNextHint(next: Exercise) {
 
 export function stopRestTimer() {
   if (timer) { clearInterval(timer); clearTimeout(timer); timer = null; }
+  releaseScreen?.();
+  releaseScreen = null;
 }
 
 /** Enter moves to the next numeric field, for fast one-handed entry. */

@@ -124,6 +124,7 @@ export async function pull(): Promise<boolean> {
   const snap = await fetchSnapshot(ctx.userId);
   const next = snap.state;
   next.settings.theme = local.settings.theme;
+  next.settings.sound = local.settings.sound;
   next.shopping = local.shopping;
 
   const sameProgramme = !!snap.meta && ctx.meta?.programmeId === snap.meta.programmeId;
@@ -310,6 +311,7 @@ export async function clearAllData() {
 export async function replaceWithImport(next: AppState) {
   const prevDates = store.state.bodyWeight.map((e) => e.date);
   next.settings.theme = store.state.settings.theme;
+  next.settings.sound = store.state.settings.sound;
   if (cloudEnabled && ctx.userId) {
     try {
       requireOnline();

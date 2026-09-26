@@ -18,6 +18,7 @@ import { renderProgress } from "./views/progress";
 import { renderSettings } from "./views/settings";
 import { renderToday } from "./views/today";
 import { renderWeight } from "./views/weight";
+import { renderRoutines, renderSession, sessionControl, startSession, stopSession } from "./views/session";
 import { currentWorkout, focusNextField, onNotesInput, onSetInput, refreshActionBar, renderDay, stepField, stopRestTimer, toggleSet } from "./views/workout";
 
 const view = $("#view")!;
@@ -35,7 +36,7 @@ export const getPhase = () => phase;
  * Routing
  * ------------------------------------------------------------------------- */
 
-const ROUTES: Record<string, (param?: string) => string> = {
+const ROUTES: Record<string, (param?: string, ...rest: string[]) => string> = {
   today: renderToday,
   calendar: renderCalendar,
   day: renderDay,
@@ -47,13 +48,15 @@ const ROUTES: Record<string, (param?: string) => string> = {
   supplements: renderSupplements,
   about: renderAbout,
   settings: renderSettings,
+  routines: renderRoutines,
+  session: renderSession,
 };
-const MORE_ROUTES = new Set(["more", "weight", "nutrition", "shopping", "supplements", "about", "settings"]);
+const MORE_ROUTES = new Set(["more", "weight", "nutrition", "shopping", "supplements", "about", "settings", "routines", "session"]);
 const AUTH_ROUTES = new Set(["login", "signup", "forgot"]);
 
 function parseRoute() {
-  const [name = "", param] = location.hash.replace(/^#\/?/, "").split("/");
-  return { name: name || "today", param };
+  const [name = "", param, ...rest] = location.hash.replace(/^#\/?/, "").split("/");
+  return { name: name || "today", param, rest };
 }
 
 export function applyTheme() {
@@ -65,7 +68,8 @@ export function applyTheme() {
 
 export function render({ keepScroll = false } = {}) {
   stopRestTimer();
-  const { name, param } = parseRoute();
+  stopSession();
+  const { name, param, rest } = parseRoute();
   let html: string;
   let nav: NavKey | null = null;
   let chrome = false;
@@ -85,12 +89,13 @@ export function render({ keepScroll = false } = {}) {
     chrome = true;
     const route = ROUTES[name] ?? renderToday;
     try {
-      html = route(param);
+      html = route(param, ...rest);
     } catch (err) {
       console.error(err);
       html = `${pageHeader("Something went wrong")}${emptyState("This screen couldn't be displayed.", "Try going back to Today.", '<a class="btn btn--primary" href="#/today">Back to Today</a>')}`;
     }
-    nav = name === "day" ? (Number(param) === currentDay() ? "today" : "calendar")
+    const dayNum = name === "session" ? Number(rest[1]) : Number(param);
+    nav = name === "day" || (name === "session" && dayNum) ? (dayNum === currentDay() ? "today" : "calendar")
       : MORE_ROUTES.has(name) ? "more"
       : (["today", "calendar", "progress"].includes(name) ? name : "today") as NavKey;
   }
@@ -128,6 +133,12 @@ const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
   "toggle-set": toggleSet,
   step: stepField,
   "stop-timer": () => { stopRestTimer(); refreshActionBar(); },
+  "session-start": () => startSession(),
+  "session-restart": () => startSession(),
+  "session-pause": () => sessionControl("pause"),
+  "session-next": () => sessionControl("next"),
+  "session-prev": () => sessionControl("prev"),
+  "session-sound": () => sessionControl("sound"),
 
   "complete-workout": () => {
     const sched = currentWorkout();
@@ -303,6 +314,11 @@ async function onChangeEvent(t: HTMLInputElement) {
     store.state.settings.weightUnit = t.value as WeightUnit;
     changed("profile");
     toast(`Showing weights in ${t.value}`);
+    return;
+  }
+  if (setting === "sound") {
+    store.state.settings.sound = t.value === "on";
+    changed("local");
     return;
   }
   if (setting === "theme") {

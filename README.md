@@ -138,6 +138,16 @@ routing needed.
   video for an exercise, a **Watch exercise demo ↗** button appears. It opens in a new tab, so your
   logged sets stay put, and it's blocked with a message when you're offline. Each workout also links
   the PDF's general video trainer (muscleandfitness.com/60days).
+- **Warm-up & stretching:** each workout has a guided warm-up (top of the workout, or "Warm up
+  first" on Today) and a cool-down stretch (bottom of the workout). Rest days offer a full-body
+  stretch. There's a full list under More → Warm-up & stretching. Each session shows the routine
+  first. Tap **Start** for a timed run: a 5-second "get ready" before each move, beeps in the last 3
+  seconds, auto-advance, and pause/back/skip. Moves done per side run once for each side. These
+  routines are **general guidance, not from the programme PDF**. Edit them in `src/data/routines.ts`.
+- **Screen stays on:** while a warm-up or stretch session or the rest timer is running, the app asks
+  the browser to keep the screen awake (Screen Wake Lock). This works in current Chrome, Edge and
+  Safari. If a browser refuses (older browsers, battery saver), the session screen says so, and
+  you'll need to turn off auto-lock yourself. Timer sounds can be switched off in Settings.
 - **Calendar:** the 5 cycles, each 12 days, colour-coded as today, done, missed or rest. Tap any day.
 - **Progress:** completion, workouts and rest days done, consistency, personal bests, body weight.
 - **More:** body weight log, programme guide, nutrition reference (the source's *example* values,
