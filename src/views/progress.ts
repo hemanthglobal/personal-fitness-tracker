@@ -1,80 +1,92 @@
-import { CYCLE_LENGTH, CYCLES, exerciseName, getSchedule, TOTAL_DAYS } from "../data/workout-data";
-import { emptyState, pageHeader, progressBar } from "../components/ui";
+import { renderPlanSection } from "./plan";
+import { emptyState, pageHeader } from "../components/ui";
 import {
-  currentDay, cycleOf, fmtSet, fmtW, isDayComplete, kgToDisplay, loggedSets, personalBests, programmeTotals, sortedWeights, store, unit,
-  type BodyWeightEntry,
+  activeRun, currentDay, fmtSet, fmtW, kgToDisplay, personalBests, projection, resolvedCount, runLength, runProgramName, runSlot,
+  sessionsSorted, sortedWeights, unit, type BodyWeightEntry, type Run,
 } from "../lib/state";
-import { esc, fmtDate, parseISO, plural, round2 } from "../lib/utils";
+import { addDays, esc, fmtDate, parseISO, plural, round2, todayISO } from "../lib/utils";
 
 export function renderProgress(): string {
-  const today = currentDay();
-  const totals = programmeTotals();
-  let wDone = 0, rDone = 0;
-  for (let d = 1; d <= TOTAL_DAYS; d++) {
-    if (!isDayComplete(d)) continue;
-    getSchedule(d)!.type === "rest" ? rDone++ : wDone++;
-  }
-  const doneDays = wDone + rDone;
-  const pct = Math.round((doneDays / TOTAL_DAYS) * 100);
-  const elapsed = Math.min(Math.max(today, 0), TOTAL_DAYS);
-  let doneSoFar = 0;
-  for (let d = 1; d <= elapsed; d++) if (isDayComplete(d)) doneSoFar++;
-  const consistency = elapsed ? Math.round((doneSoFar / elapsed) * 100) : 0;
-  const cycle = today < 1 ? 1 : cycleOf(today);
-  const message = doneDays === 0 ? "Day 1 is where it starts" : doneDays >= TOTAL_DAYS ? "Programme complete" : pct >= 50 ? "Over halfway. Keep going" : "Keep going";
-
-  const R = 52, C = 2 * Math.PI * R;
-  const ring = `<svg class="prog-ring" viewBox="0 0 120 120" aria-hidden="true">
-      <circle class="prog-ring__track" cx="60" cy="60" r="${R}"/>
-      <circle class="prog-ring__fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C}" style="--off:${C * (1 - doneDays / TOTAL_DAYS)};--full:${C}"/>
-    </svg>`;
-
-  const bars: string[] = [];
-  for (let c = 1; c <= CYCLES; c++) {
-    let n = 0;
-    for (let d = (c - 1) * CYCLE_LENGTH + 1; d <= c * CYCLE_LENGTH; d++) if (isDayComplete(d)) n++;
-    const current = c === cycle && today >= 1 && today <= TOTAL_DAYS;
-    bars.push(`<li class="cycle-bar ${current ? "is-current" : ""}"><span class="cycle-bar__label">Cycle ${c}${current ? '<span class="sr-only"> (current)</span>' : ""}</span>
-      ${progressBar(n, CYCLE_LENGTH, `Cycle ${c} progress`)}<span class="cycle-bar__n">${n}/12</span></li>`);
-  }
-
+  const run = activeRun();
   return `
     ${pageHeader("Progress")}
-    <section class="progress-hero card">
-      <div class="ring-wrap">${ring}<div class="prog-ring__center"><strong>${pct}%</strong><span>complete</span></div></div>
-      <div class="progress-hero__text">
-        <p class="eyebrow">${today < 1 ? "Not started" : today > TOTAL_DAYS ? "Finished" : `Day ${today} of 60`}</p>
-        <p class="progress-hero__big">${doneDays}<span>/60 days</span></p>
-        <p class="progress-hero__msg">${message}</p>
-      </div>
-    </section>
-    <section class="stats">
-      <div class="stat card"><span class="stat__label">Workouts</span><span class="stat__value">${wDone}<small>/${totals.workouts}</small></span></div>
-      <div class="stat card"><span class="stat__label">Rest days</span><span class="stat__value">${rDone}<small>/${totals.rest}</small></span></div>
-      <div class="stat card"><span class="stat__label">Current cycle</span><span class="stat__value">${cycle}<small>/5</small></span></div>
-      <div class="stat card"><span class="stat__label">Consistency</span><span class="stat__value">${elapsed ? `${consistency}<small>%</small>` : "—"}</span>
-        <span class="stat__foot">${elapsed ? `${doneSoFar} of ${elapsed} days so far` : "Starts on Day 1"}</span></div>
-    </section>
-    <section class="section">
-      <h2 class="section__title">Cycles</h2>
-      <ul class="card cycle-bars">${bars.join("")}</ul>
-    </section>
+    ${run ? programProgress(run) : `<section class="card day-detail"><p class="day-detail__title">No program running</p>
+      <p class="muted">Your training history below still counts.</p><a class="btn btn--primary btn--block" href="#/programs">Choose a program</a></section>`}
+    ${activitySection()}
     ${bestsSection()}
     ${bodyWeightSummary()}`;
 }
 
+function programProgress(run: Run): string {
+  const len = runLength(run);
+  const done = resolvedCount(run, "done");
+  const skipped = resolvedCount(run, "skipped");
+  let wDone = 0, rDone = 0, wTotal = 0, rTotal = 0;
+  for (const [n, d] of Object.entries(run.days)) {
+    if (d.status !== "done") continue;
+    runSlot(run, Number(n))?.type === "rest" ? rDone++ : wDone++;
+  }
+  if (len) for (let d = 1; d <= len; d++) runSlot(run, d)?.type === "rest" ? rTotal++ : wTotal++;
+  const cur = currentDay() ?? 0;
+  const resolved = done + skipped;
+  const pct = len ? Math.round((resolved / len) * 100) : 0;
+  const message = resolved === 0 ? "Day 1 is where it starts" : run.status === "finished" ? "Program complete" : pct >= 50 ? "Over halfway. Keep going" : "Keep going";
+
+  const R = 52, C = 2 * Math.PI * R;
+  const ring = len ? `<svg class="prog-ring" viewBox="0 0 120 120" aria-hidden="true">
+      <circle class="prog-ring__track" cx="60" cy="60" r="${R}"/>
+      <circle class="prog-ring__fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C}" style="--off:${C * (1 - resolved / len)};--full:${C}"/>
+    </svg>` : "";
+  const p = projection(run);
+
+  return `
+    <section class="progress-hero card">
+      ${len ? `<div class="ring-wrap">${ring}<div class="prog-ring__center"><strong>${pct}%</strong><span>complete</span></div></div>` : ""}
+      <div class="progress-hero__text">
+        <p class="eyebrow"><a href="#/programs">${esc(runProgramName(run))}</a></p>
+        <p class="progress-hero__big">${resolved}<span>${len ? `/${len}` : ""} days</span></p>
+        <p class="progress-hero__msg">${message}</p>
+      </div>
+    </section>
+    <section class="stats">
+      <div class="stat card"><span class="stat__label">Workouts</span><span class="stat__value">${wDone}${len ? `<small>/${wTotal}</small>` : ""}</span></div>
+      <div class="stat card"><span class="stat__label">Rest days</span><span class="stat__value">${rDone}${len ? `<small>/${rTotal}</small>` : ""}</span>
+        ${skipped ? `<span class="stat__foot">${skipped} skipped to train</span>` : ""}</div>
+      <div class="stat card"><span class="stat__label">Next up</span><span class="stat__value">${cur >= 1 && (!len || cur <= len) ? `Day ${cur}` : "—"}</span></div>
+      <div class="stat card"><span class="stat__label">Finish</span><span class="stat__value stat__value--sm">${p.finish ? esc(fmtDate(p.finish, { day: "numeric", month: "short" })) : "Open"}</span>
+        <span class="stat__foot">${p.finish ? (p.slip > 0 ? `${plural(p.slip, "day")} later than planned` : "On schedule") : "Runs until you stop"}</span></div>
+    </section>
+    ${renderPlanSection(run)}`;
+}
+
+/** Training days in the last 4 weeks, across every program and free workouts. */
+function activitySection(): string {
+  const today = todayISO();
+  const from = addDays(today, -27);
+  const trained = new Set(sessionsSorted().filter((s) => s.status === "done" && s.date >= from).map((s) => s.date));
+  const cells: string[] = [];
+  for (let i = 0; i < 28; i++) {
+    const d = addDays(from, i);
+    cells.push(`<span class="act__cell ${trained.has(d) ? "is-on" : ""} ${d === today ? "is-today" : ""}" title="${esc(fmtDate(d))}"></span>`);
+  }
+  const total = sessionsSorted().filter((s) => s.status === "done").length;
+  return `<section class="section">
+    <h2 class="section__title">Last 4 weeks <span class="section__hint">${plural(trained.size, "training day")} · ${plural(total, "workout")} all time</span></h2>
+    <div class="card act" role="img" aria-label="${trained.size} training days in the last 4 weeks">${cells.join("")}</div>
+  </section>`;
+}
+
 function bestsSection() {
   const list = personalBests();
-  const sessions = Object.values(store.state.workouts).filter((exs) => Object.values(exs).some((l) => loggedSets(l).length)).length;
   if (!list.length) {
     return `<section class="section"><h2 class="section__title">Personal bests</h2>
       ${emptyState("No workout history yet.", "Your heaviest logged set for each exercise will appear here.")}</section>`;
   }
   return `<section class="section">
-    <h2 class="section__title">Personal bests <span class="section__hint">${plural(sessions, "session")} logged</span></h2>
+    <h2 class="section__title">Personal bests <span class="section__hint">across all programs</span></h2>
     <ul class="card list-rows">
       ${list.slice(0, 8).map((b) => `<li class="list-row">
-        <span class="list-row__main">${esc(exerciseName(b.code))}<small>Day ${b.day}</small></span>
+        <span class="list-row__main">${esc(b.name)}<small>${esc(fmtDate(b.date))}</small></span>
         <span class="list-row__value">${esc(fmtSet(b))}</span></li>`).join("")}
     </ul>
   </section>`;

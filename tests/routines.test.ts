@@ -8,7 +8,7 @@ describe("warm-up & stretching routines", () => {
       expect(getRoutine("stretch", k)?.kind).toBe("stretch");
     }
     expect(getRoutine("stretch", "full")).not.toBeNull();
-    expect(getRoutine("warmup", "full")).toBeNull();
+    expect(getRoutine("warmup", "full")?.kind).toBe("warmup"); // general warm-up for custom programs
     expect(getRoutine("nope", "A")).toBeNull();
   });
 

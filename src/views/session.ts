@@ -6,7 +6,6 @@
  */
 import { expandSteps, getRoutine, PREP_SECONDS, routineMinutes, STRETCHES, WARMUPS, type Routine, type Step } from "../data/routines";
 import { WORKOUTS } from "../data/workout-data";
-import type { WorkoutCode } from "../types/workout";
 import { ICON } from "../components/icons";
 import { emptyState, listLink, pageHeader } from "../components/ui";
 import { cue, unlockAudio } from "../lib/sound";
@@ -28,7 +27,7 @@ export function renderRoutines(): string {
   return `
     ${pageHeader("Warm-up & stretching", { back: "#/more", sub: "Guided timers. The screen stays on while a session runs." })}
     <h2 class="section__title">Warm-ups <span class="tag tag--quiet">General routine</span></h2>
-    <ul class="card list-rows">${(Object.keys(WARMUPS) as WorkoutCode[]).map((k) => row(WARMUPS[k])).join("")}</ul>
+    <ul class="card list-rows">${(["full", "A", "B", "C", "D"] as const).map((k) => row(WARMUPS[k])).join("")}</ul>
     <h2 class="section__title section__title--spaced">Stretching <span class="tag tag--quiet">General routine</span></h2>
     <ul class="card list-rows">${(["A", "B", "C", "D", "full"] as const).map((k) => row(STRETCHES[k])).join("")}</ul>
     <p class="fineprint">These routines are general guidance added to this app. They are not part of the programme PDF.</p>`;
@@ -38,18 +37,20 @@ export function renderRoutines(): string {
 export function renderSession(kind?: string, key?: string, dayParam?: string): string {
   stopSession();
   const routine = kind && key ? getRoutine(kind, key) : null;
-  const day = Number(dayParam) || null;
-  const back = day ? `#/day/${day}` : "#/routines";
+  // Third segment: a program day number, or "log:<sessionId>" for a free / logged session.
+  const fromLog = dayParam?.startsWith("log:") ? dayParam.slice(4) : null;
+  const day = fromLog ? null : Number(dayParam) || null;
+  const back = fromLog ? `#/log/${fromLog}` : day ? `#/day/${day}` : "#/routines";
   if (!routine) {
     return `${pageHeader("Session not found", { back: "#/routines" })}
       ${emptyState("That routine doesn't exist.", "Pick one from the list.", '<a class="btn btn--primary" href="#/routines">Warm-up & stretching</a>')}`;
   }
   const forWhat = routine.key === "full" ? "Any day" : `Workout ${routine.key} · ${WORKOUTS[routine.key].name}`;
-  pending = { routine, day, back };
+  pending = { routine, day: day ?? (fromLog ? -1 : null), back };
 
   return `
     <section class="session session--overview" id="session">
-      ${pageHeader(esc(routine.title), { back, backLabel: day ? "Workout" : "Back", eyebrow: `${routine.kind === "warmup" ? "Warm-up" : "Stretching"} · ${esc(forWhat)}` })}
+      ${pageHeader(esc(routine.title), { back, backLabel: back === "#/routines" ? "Back" : "Workout", eyebrow: `${routine.kind === "warmup" ? "Warm-up" : "Stretching"} · ${esc(forWhat)}` })}
       <div class="session__summary">
         <div><strong>${routineMinutes(routine)}</strong><span>min</span></div>
         <div><strong>${routine.moves.length}</strong><span>moves</span></div>
@@ -180,14 +181,15 @@ export function sessionControl(what: string) {
 
 function finish() {
   if (!run) return;
-  const { routine, day } = run;
+  const { routine, day, back } = run;
   cue.done(sound());
   stopSession();
   const el = $("#session");
   if (!el) return;
-  const next = routine.kind === "warmup" && day
-    ? `<a class="btn btn--primary btn--lg btn--block" href="#/day/${day}">Go to workout</a>`
-    : `<a class="btn btn--primary btn--lg btn--block" href="${day ? `#/day/${day}` : "#/today"}">${day ? "Back to workout" : "Back to Today"}</a>`;
+  const toWorkout = day != null; // came from a workout (program day or logged session)
+  const next = routine.kind === "warmup" && toWorkout
+    ? `<a class="btn btn--primary btn--lg btn--block" href="${back}">Go to workout</a>`
+    : `<a class="btn btn--primary btn--lg btn--block" href="${toWorkout ? back : "#/today"}">${toWorkout ? "Back to workout" : "Back to Today"}</a>`;
   el.className = "session session--done";
   el.innerHTML = `
     <div class="session__done">

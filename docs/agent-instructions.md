@@ -32,6 +32,18 @@ the app keeps a local-only mode for when Supabase isn't configured.
 - Mobile first, premium feel, accessible (labels, focus states, not colour-only), reduced motion
   respected, and it works offline.
 
+## Later decisions by the user (these override the brief)
+
+- **Programs, not a fixed calendar.** 60 Days to Fit is one built-in program. Users can build their own
+  (e.g. Push / Pull / Legs + Upper / Lower) and switch programs. Past runs and every logged workout are
+  kept as history.
+- **The plan moves with you.** A program is a sequence of days. Skipping a day pushes the rest back.
+  Nothing is "missed". This replaces the brief's "don't shift missed days" rule.
+- **Rest days are ticked manually**, and can be **skipped** ("Train instead") to bring the next workout forward.
+- **Swap workout** (do another workout from the program today; the planned day stays next up) and
+  **free workouts** (any exercises, logged on the calendar, not counted as a program day).
+- The Calendar tab is a real month calendar and training log. The cycle-by-cycle plan is on Progress.
+
 ## Verified differences between the brief and the PDF
 
 See the "Source notes" section of the README. The PDF version was implemented.

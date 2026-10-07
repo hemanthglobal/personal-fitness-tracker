@@ -1,18 +1,12 @@
 /*
- * Supabase data access. Maps between the app's AppState and the Postgres tables.
+ * Supabase data access. Maps between AppState (v3) and the Postgres tables (migration 0004).
  * RLS enforces ownership server-side; user_id is sent only because the policies CHECK it.
  */
-import { allExerciseCodes, getSchedule, TOTAL_DAYS } from "../data/workout-data";
-import type { BodyWeightRow, ExerciseNoteRow, ExerciseSetRow, ProgrammeDayRow, ProgrammeRow } from "../types/database";
+import { BUILTIN_60, type CustomProgram } from "../data/programs";
 import { requireClient } from "./supabase";
-import { defaultState, lbToKg, type AppState, type BodyWeightEntry, type WeightUnit } from "./state";
-import { addDays } from "./utils";
-
-export interface RemoteMeta {
-  programmeId: string;
-  dayIds: Record<number, string>;
-  sessionIds: Record<number, string>;
-}
+import {
+  defaultState, lbToKg, normProgram, type AppState, type BodyWeightEntry, type ExerciseLog, type Run, type Session, type WeightUnit,
+} from "./state";
 
 /** Error carrying a Postgres/PostgREST code so the sync layer can tell transient from permanent failures. */
 export class DbError extends Error {
@@ -27,215 +21,160 @@ function check<T>(res: { data: T; error: { code?: string; message: string } | nu
 }
 
 const db = () => requireClient();
-const VALID_CODES = new Set(allExerciseCodes());
 const kg3 = (n: number) => Math.round(n * 1000) / 1000;
 
+const toDbStatus = { active: "active", finished: "completed", ended: "cancelled" } as const;
+const fromDbStatus = (s: string): Run["status"] => (s === "completed" ? "finished" : s === "cancelled" ? "ended" : "active");
+
 /* ---------------------------------------------------------------------------
- * Load
+ * Load everything for the signed-in user
  * ------------------------------------------------------------------------- */
 
-export interface RemoteSnapshot {
-  state: AppState;
-  meta: RemoteMeta | null; // null = no active programme (show onboarding)
+interface SessionRow {
+  id: string; programme_id: string | null; day_number: number | null; workout_key: string | null; title: string;
+  session_date: string; status: string; completed_at: string | null; plan: unknown; created_at: string; updated_at: string;
 }
 
-export async function fetchSnapshot(userId: string): Promise<RemoteSnapshot> {
-  const [profile, programme, weights] = await Promise.all([
+export async function fetchSnapshot(userId: string): Promise<AppState> {
+  const [profile, programs, runs, runDays, sessions, sets, notes, weights] = await Promise.all([
     db().from("profiles").select("weight_unit").eq("id", userId).maybeSingle(),
-    db().from("programmes").select("*").eq("status", "active").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    db().from("custom_programs").select("id, name, definition, created_at, updated_at"),
+    db().from("programmes").select("id, name, program_ref, start_date, status, ended_at, created_at").order("created_at"),
+    db().from("run_days").select("programme_id, day_number, status, occurred_on, session_id"),
+    db().from("training_sessions").select("id, programme_id, day_number, workout_key, title, session_date, status, completed_at, plan, created_at, updated_at"),
+    db().from("session_sets").select("session_id, exercise_code, set_number, weight_kg, reps, completed"),
+    db().from("session_notes").select("session_id, exercise_code, notes"),
     db().from("body_weight_entries").select("recorded_at, weight, unit, notes").order("recorded_at"),
   ]);
 
   const state = defaultState();
   const p = check(profile) as { weight_unit: WeightUnit } | null;
   if (p) state.settings.weightUnit = p.weight_unit === "lb" ? "lb" : "kg";
-  state.bodyWeight = (check(weights) as Pick<BodyWeightRow, "recorded_at" | "weight" | "unit" | "notes">[]).map((r) => ({
+
+  for (const r of check(programs) as { id: string; name: string; definition: Record<string, unknown>; created_at: string; updated_at: string }[]) {
+    const prog = normProgram({ ...r.definition, name: r.name, createdAt: r.created_at, updatedAt: r.updated_at }, r.id);
+    if (prog) state.programs[r.id] = prog;
+  }
+
+  for (const r of check(runs) as { id: string; name: string; program_ref: string; start_date: string; status: string; ended_at: string | null; created_at: string }[]) {
+    state.runs[r.id] = {
+      id: r.id, programRef: r.program_ref || BUILTIN_60, name: r.name, startDate: r.start_date,
+      status: fromDbStatus(r.status), endedAt: r.ended_at, days: {}, createdAt: r.created_at,
+    };
+    if (r.status === "active") state.activeRunId = r.id;
+  }
+  for (const d of check(runDays) as { programme_id: string; day_number: number; status: string; occurred_on: string; session_id: string | null }[]) {
+    const run = state.runs[d.programme_id];
+    if (run) run.days[d.day_number] = { status: d.status === "skipped" ? "skipped" : "done", date: d.occurred_on, sessionId: d.session_id };
+  }
+
+  for (const r of check(sessions) as SessionRow[]) {
+    state.sessions[r.id] = {
+      id: r.id, date: r.session_date, runId: r.programme_id, day: r.day_number, workoutKey: r.workout_key, title: r.title,
+      plan: Array.isArray(r.plan) ? (r.plan as Session["plan"]) : [], logs: {},
+      status: r.status === "done" ? "done" : "in_progress", completedAt: r.completed_at, createdAt: r.created_at, updatedAt: r.updated_at,
+    };
+  }
+  const logOf = (sid: string, code: string): ExerciseLog | null => {
+    const s = state.sessions[sid];
+    return s ? (s.logs[code] ??= { sets: [], notes: "" }) : null;
+  };
+  for (const r of check(sets) as { session_id: string; exercise_code: string; set_number: number; weight_kg: number | string | null; reps: number | null; completed: boolean }[]) {
+    const log = logOf(r.session_id, r.exercise_code);
+    if (!log) continue;
+    while (log.sets.length < r.set_number) log.sets.push({ weight: null, reps: null, done: false });
+    log.sets[r.set_number - 1] = { weight: r.weight_kg == null ? null : Number(r.weight_kg), reps: r.reps, done: r.completed };
+  }
+  for (const r of check(notes) as { session_id: string; exercise_code: string; notes: string }[]) {
+    const log = logOf(r.session_id, r.exercise_code);
+    if (log) log.notes = r.notes;
+  }
+
+  state.bodyWeight = (check(weights) as { recorded_at: string; weight: number | string; unit: string; notes: string | null }[]).map((r) => ({
     date: r.recorded_at,
     weight: r.unit === "lb" ? lbToKg(Number(r.weight)) : Number(r.weight),
     notes: r.notes ?? "",
   }));
 
-  const prog = check(programme) as ProgrammeRow | null;
-  if (!prog) return { state, meta: null };
-
-  state.onboarded = true;
-  state.settings.startDate = prog.start_date;
-  const meta: RemoteMeta = { programmeId: prog.id, dayIds: {}, sessionIds: {} };
-
-  const days = check(await db().from("programme_days").select("id, day_number, completed, completed_at").eq("programme_id", prog.id)) as Pick<
-    ProgrammeDayRow, "id" | "day_number" | "completed" | "completed_at"
-  >[];
-  const dayById: Record<string, number> = {};
-  for (const d of days) {
-    meta.dayIds[d.day_number] = d.id;
-    dayById[d.id] = d.day_number;
-    if (d.completed) state.days[d.day_number] = { completed: true, completedAt: d.completed_at };
-  }
-  if (!days.length) return { state, meta };
-
-  const sessions = check(await db().from("workout_sessions").select("id, programme_day_id").in("programme_day_id", days.map((d) => d.id))) as {
-    id: string; programme_day_id: string;
-  }[];
-  const dayBySession: Record<string, number> = {};
-  for (const s of sessions) {
-    const n = dayById[s.programme_day_id];
-    if (n == null) continue;
-    meta.sessionIds[n] = s.id;
-    dayBySession[s.id] = n;
-  }
-  if (!sessions.length) return { state, meta };
-
-  const ids = sessions.map((s) => s.id);
-  const [sets, notes] = await Promise.all([
-    db().from("exercise_sets").select("workout_session_id, exercise_code, set_number, weight_kg, reps, completed").in("workout_session_id", ids),
-    db().from("exercise_notes").select("workout_session_id, exercise_code, notes").in("workout_session_id", ids),
-  ]);
-
-  const logFor = (sessionId: string, code: string) => {
-    const day = dayBySession[sessionId]!;
-    const w = (state.workouts[day] ??= {});
-    return (w[code] ??= { sets: [], notes: "" });
-  };
-  for (const r of check(sets) as ExerciseSetRow[]) {
-    const log = logFor(r.workout_session_id, r.exercise_code);
-    while (log.sets.length < r.set_number) log.sets.push({ weight: null, reps: null, done: false });
-    log.sets[r.set_number - 1] = { weight: r.weight_kg == null ? null : Number(r.weight_kg), reps: r.reps, done: r.completed };
-  }
-  for (const r of check(notes) as ExerciseNoteRow[]) logFor(r.workout_session_id, r.exercise_code).notes = r.notes;
-
-  return { state, meta };
+  state.onboarded = Object.keys(state.runs).length > 0 || Object.keys(state.sessions).length > 0;
+  return state;
 }
 
 /* ---------------------------------------------------------------------------
- * Programmes
+ * Push one changed object (upsert, or delete when it no longer exists locally)
  * ------------------------------------------------------------------------- */
-
-function dayRows(programmeId: string, userId: string, startDate: string, ids?: Record<number, string>) {
-  const rows = [];
-  for (let n = 1; n <= TOTAL_DAYS; n++) {
-    const s = getSchedule(n)!;
-    rows.push({
-      ...(ids?.[n] ? { id: ids[n] } : {}),
-      programme_id: programmeId,
-      user_id: userId,
-      day_number: n,
-      cycle_number: s.cycle,
-      workout_code: s.type === "workout" ? s.workout : null,
-      workout_type: s.type === "workout" ? s.intensity : null,
-      is_rest_day: s.type === "rest",
-      scheduled_date: addDays(startDate, n - 1),
-    });
-  }
-  return rows;
-}
-
-/** Create a programme and its 60 generated days. Any existing active programme must be ended first. */
-export async function createProgramme(userId: string, startDate: string): Promise<RemoteMeta> {
-  const prog = check(
-    await db().from("programmes").insert({ user_id: userId, start_date: startDate, status: "active" }).select("id").single(),
-  ) as { id: string };
-  try {
-    const days = check(await db().from("programme_days").insert(dayRows(prog.id, userId, startDate)).select("id, day_number")) as {
-      id: string; day_number: number;
-    }[];
-    const meta: RemoteMeta = { programmeId: prog.id, dayIds: {}, sessionIds: {} };
-    for (const d of days) meta.dayIds[d.day_number] = d.id;
-    return meta;
-  } catch (err) {
-    await db().from("programmes").delete().eq("id", prog.id); // don't leave a half-created programme
-    throw err;
-  }
-}
-
-export async function endProgramme(programmeId: string, status: "completed" | "cancelled") {
-  check(await db().from("programmes").update({ status }).eq("id", programmeId));
-}
-
-/** Change start date; re-dates the 60 generated days (completion + logs stay on their day number). */
-export async function updateStartDate(meta: RemoteMeta, userId: string, startDate: string) {
-  check(await db().from("programmes").update({ start_date: startDate }).eq("id", meta.programmeId));
-  check(await db().from("programme_days").upsert(dayRows(meta.programmeId, userId, startDate, meta.dayIds), { onConflict: "id" }));
-}
 
 export async function pushProfile(userId: string, weightUnit: WeightUnit) {
   check(await db().from("profiles").update({ weight_unit: weightUnit }).eq("id", userId));
 }
 
-/* ---------------------------------------------------------------------------
- * Day / workout log
- * ------------------------------------------------------------------------- */
-
-export async function pushDay(meta: RemoteMeta, userId: string, day: number, state: AppState) {
-  const dayId = meta.dayIds[day];
-  if (!dayId) throw new DbError("missing_day", `No programme day row for day ${day}`);
-  const d = state.days[day];
-  const completed = !!d?.completed;
-  const completedAt = completed ? d?.completedAt ?? new Date().toISOString() : null;
-
-  check(await db().from("programme_days").update({ completed, completed_at: completedAt }).eq("id", dayId));
-
-  const logs = Object.entries(state.workouts[day] ?? {}).filter(([code]) => VALID_CODES.has(code));
-  const hasLogs = logs.some(([, l]) => l.notes || l.sets.some((s) => s.done || s.weight != null || s.reps != null));
-  let sessionId = meta.sessionIds[day];
-  if (!sessionId && !hasLogs) return;
-
-  if (!sessionId) {
-    const row = check(
-      await db()
-        .from("workout_sessions")
-        .upsert({ user_id: userId, programme_day_id: dayId, started_at: new Date().toISOString(), completed_at: completedAt }, { onConflict: "programme_day_id" })
-        .select("id")
-        .single(),
-    ) as { id: string };
-    sessionId = meta.sessionIds[day] = row.id;
-  } else {
-    check(await db().from("workout_sessions").update({ completed_at: completedAt }).eq("id", sessionId));
-  }
-
-  const setRows: ExerciseSetRow[] = [];
-  const noteRows: ExerciseNoteRow[] = [];
-  const emptyNoteCodes: string[] = [];
-  for (const [code, log] of logs) {
-    log.sets.slice(0, 5).forEach((s, i) =>
-      setRows.push({
-        user_id: userId,
-        workout_session_id: sessionId!,
-        exercise_code: code,
-        set_number: i + 1,
-        weight_kg: s.weight == null ? null : kg3(s.weight),
-        reps: s.reps,
-        completed: s.done,
-      }),
-    );
-    if (log.notes.trim()) noteRows.push({ user_id: userId, workout_session_id: sessionId, exercise_code: code, notes: log.notes.slice(0, 2000) });
-    else emptyNoteCodes.push(code);
-  }
-  if (setRows.length) check(await db().from("exercise_sets").upsert(setRows, { onConflict: "workout_session_id,exercise_code,set_number" }));
-  if (noteRows.length) check(await db().from("exercise_notes").upsert(noteRows, { onConflict: "workout_session_id,exercise_code" }));
-  if (emptyNoteCodes.length) {
-    check(await db().from("exercise_notes").delete().eq("workout_session_id", sessionId).in("exercise_code", emptyNoteCodes));
-  }
+export async function pushProgram(userId: string, id: string, p: CustomProgram | null) {
+  if (!p) { check(await db().from("custom_programs").delete().eq("id", id)); return; }
+  const definition = { workouts: p.workouts, pattern: p.pattern, repeats: p.repeats };
+  check(await db().from("custom_programs").upsert({ id, user_id: userId, name: p.name, definition }, { onConflict: "id" }));
 }
 
-/* ---------------------------------------------------------------------------
- * Body weight
- * ------------------------------------------------------------------------- */
+export async function pushRun(userId: string, id: string, run: Run | null) {
+  if (!run) { check(await db().from("programmes").delete().eq("id", id)); return; }
+  check(await db().from("programmes").upsert({
+    id, user_id: userId, name: run.name.slice(0, 120) || "Program", program_ref: run.programRef,
+    start_date: run.startDate, status: toDbStatus[run.status], ended_at: run.endedAt,
+  }, { onConflict: "id" }));
+  const days = Object.entries(run.days).map(([n, d]) => ({
+    programme_id: id, user_id: userId, day_number: Number(n), status: d.status, occurred_on: d.date, session_id: d.sessionId,
+  }));
+  if (days.length) check(await db().from("run_days").upsert(days, { onConflict: "programme_id,day_number" }));
+  // Remove days that were un-ticked locally.
+  const keep = days.map((d) => d.day_number);
+  let del = db().from("run_days").delete().eq("programme_id", id);
+  if (keep.length) del = del.not("day_number", "in", `(${keep.join(",")})`);
+  check(await del);
+}
+
+export async function pushSession(userId: string, id: string, s: Session | null) {
+  if (!s) { check(await db().from("training_sessions").delete().eq("id", id)); return; }
+  check(await db().from("training_sessions").upsert({
+    id, user_id: userId, programme_id: s.runId, day_number: s.runId ? s.day : null, workout_key: s.workoutKey,
+    title: s.title.slice(0, 80) || "Workout", session_date: s.date, status: s.status, completed_at: s.completedAt, plan: s.plan,
+  }, { onConflict: "id" }));
+
+  const sets: Record<string, unknown>[] = [];
+  const notes: Record<string, unknown>[] = [];
+  const emptyNotes: string[] = [];
+  for (const [code, log] of Object.entries(s.logs)) {
+    log.sets.slice(0, 10).forEach((x, i) => sets.push({
+      user_id: userId, session_id: id, exercise_code: code, set_number: i + 1,
+      weight_kg: x.weight == null ? null : kg3(x.weight), reps: x.reps, completed: x.done,
+    }));
+    if (log.notes.trim()) notes.push({ user_id: userId, session_id: id, exercise_code: code, notes: log.notes.slice(0, 2000) });
+    else emptyNotes.push(code);
+  }
+  if (sets.length) check(await db().from("session_sets").upsert(sets, { onConflict: "session_id,exercise_code,set_number" }));
+  if (notes.length) check(await db().from("session_notes").upsert(notes, { onConflict: "session_id,exercise_code" }));
+  if (emptyNotes.length) check(await db().from("session_notes").delete().eq("session_id", id).in("exercise_code", emptyNotes));
+  // Exercises removed from a free workout.
+  const codes = Object.keys(s.logs);
+  let del = db().from("session_sets").delete().eq("session_id", id);
+  if (codes.length) del = del.not("exercise_code", "in", `(${codes.join(",")})`);
+  check(await del);
+}
 
 /** Upsert the entry for a date, or delete it when `entry` is null. Stored in kg. */
 export async function pushBodyWeight(userId: string, date: string, entry: BodyWeightEntry | null) {
   if (entry) {
-    check(
-      await db()
-        .from("body_weight_entries")
-        .upsert({ user_id: userId, recorded_at: date, weight: kg3(entry.weight), unit: "kg", notes: entry.notes || null }, { onConflict: "user_id,recorded_at" }),
-    );
+    check(await db().from("body_weight_entries").upsert(
+      { user_id: userId, recorded_at: date, weight: kg3(entry.weight), unit: "kg", notes: entry.notes || null },
+      { onConflict: "user_id,recorded_at" },
+    ));
   } else {
     check(await db().from("body_weight_entries").delete().eq("recorded_at", date));
   }
 }
 
-/** Delete all of the signed-in user's programmes (cascades to days/sessions/sets) and body weight. */
+/** Delete all of the signed-in user's training data (RLS limits this to their own rows). */
 export async function deleteAllUserData() {
+  check(await db().from("training_sessions").delete().not("id", "is", null));
   check(await db().from("programmes").delete().not("id", "is", null));
+  check(await db().from("custom_programs").delete().not("id", "is", null));
   check(await db().from("body_weight_entries").delete().not("id", "is", null));
 }

@@ -1,25 +1,36 @@
 /* Router, rendering and event delegation. */
+import { BUILTIN_60, pplTemplate, programRef } from "./data/programs";
 import { confirmDialog } from "./components/modal";
 import { renderSyncStatus, setActiveNav, type NavKey } from "./components/navigation";
 import { toast } from "./components/toast";
 import { emptyState, pageHeader } from "./components/ui";
 import { sendPasswordReset, signIn, signOut, signUp, updatePassword } from "./lib/auth";
-import { changed, currentDay, displayToKg, isDayComplete, normalizeState, setDayComplete, store, unit, type WeightUnit } from "./lib/state";
-import { clearAllData, flush, onStatus, replaceWithImport, session, startProgramme } from "./lib/sync";
+import {
+  activeRun, changed, completeSession, createSession, deleteSession, displayToKg, endRun, normalizeState, setRestDay, startRun,
+  store, unit, uuid, type WeightUnit,
+} from "./lib/state";
+import { clearAllData, flush, onStatus, replaceWithImport, session } from "./lib/sync";
 import { cloudEnabled } from "./lib/supabase";
 import { rememberTheme } from "./lib/storage";
 import { $, fmtDate, parseISO, todayISO } from "./lib/utils";
 import { renderAuth, type AuthScreen } from "./views/auth";
-import { renderCalendar, selectCycle } from "./views/calendar";
+import { calendarAction, renderCalendar, resetCalendar } from "./views/calendar";
+import { selectCycle } from "./views/plan";
 import { renderMore, renderAbout, renderShopping, renderSupplements } from "./views/more";
 import { renderNutrition } from "./views/nutrition";
 import { renderOnboarding } from "./views/onboarding";
 import { renderProgress } from "./views/progress";
+import {
+  builderAction, builderDeleteTarget, builderInput, builderSave, discardDraft, renderBuilder, renderProgramStart, renderPrograms,
+} from "./views/programs";
 import { renderSettings } from "./views/settings";
 import { renderToday } from "./views/today";
 import { renderWeight } from "./views/weight";
 import { renderRoutines, renderSession, sessionControl, startSession, stopSession } from "./views/session";
-import { currentWorkout, focusNextField, onNotesInput, onSetInput, refreshActionBar, renderDay, stepField, stopRestTimer, toggleSet } from "./views/workout";
+import {
+  addExercise, addSet, currentWorkout, ensureSession, focusNextField, onNotesInput, onSessionDate, onSetInput, refreshActionBar,
+  removeExercise, renderDay, renderLog, renderSwap, stepField, stopRestTimer, toggleSet,
+} from "./views/workout";
 
 const view = $("#view")!;
 
@@ -40,8 +51,12 @@ const ROUTES: Record<string, (param?: string, ...rest: string[]) => string> = {
   today: renderToday,
   calendar: renderCalendar,
   day: renderDay,
+  log: renderLog,
+  swap: renderSwap,
   progress: renderProgress,
   more: renderMore,
+  programs: renderPrograms,
+  program: (mode, ...rest) => (mode === "start" ? renderProgramStart(...(rest as [string])) : renderBuilder(mode, rest[0])),
   weight: renderWeight,
   nutrition: renderNutrition,
   shopping: renderShopping,
@@ -51,7 +66,9 @@ const ROUTES: Record<string, (param?: string, ...rest: string[]) => string> = {
   routines: renderRoutines,
   session: renderSession,
 };
-const MORE_ROUTES = new Set(["more", "weight", "nutrition", "shopping", "supplements", "about", "settings", "routines", "session"]);
+const NAV_OF: Record<string, NavKey> = {
+  today: "today", day: "today", swap: "today", calendar: "calendar", log: "calendar", progress: "progress",
+};
 const AUTH_ROUTES = new Set(["login", "signup", "forgot"]);
 
 function parseRoute() {
@@ -87,6 +104,7 @@ export function render({ keepScroll = false } = {}) {
     html = renderOnboarding();
   } else {
     chrome = true;
+    if (name !== "program") discardDraft();
     const route = ROUTES[name] ?? renderToday;
     try {
       html = route(param, ...rest);
@@ -94,10 +112,7 @@ export function render({ keepScroll = false } = {}) {
       console.error(err);
       html = `${pageHeader("Something went wrong")}${emptyState("This screen couldn't be displayed.", "Try going back to Today.", '<a class="btn btn--primary" href="#/today">Back to Today</a>')}`;
     }
-    const dayNum = name === "session" ? Number(rest[1]) : Number(param);
-    nav = name === "day" || (name === "session" && dayNum) ? (dayNum === currentDay() ? "today" : "calendar")
-      : MORE_ROUTES.has(name) ? "more"
-      : (["today", "calendar", "progress"].includes(name) ? name : "today") as NavKey;
+    nav = NAV_OF[name] ?? (ROUTES[name] ? "more" : "today");
   }
 
   view.innerHTML = html;
@@ -117,6 +132,9 @@ window.addEventListener("hashchange", () => {
   $("#main")?.focus({ preventScroll: true });
 });
 
+const rerender = () => render({ keepScroll: true });
+const resetViews = () => { selectCycle(null); resetCalendar(); };
+
 /* ---------------------------------------------------------------------------
  * Actions
  * ------------------------------------------------------------------------- */
@@ -130,9 +148,63 @@ async function guarded(fn: () => Promise<void>) {
 }
 
 const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
+  /* ---- logging ---- */
   "toggle-set": toggleSet,
   step: stepField,
+  "add-set": (btn) => { addSet(btn); rerender(); },
+  "remove-exercise": (btn) => { removeExercise(btn); rerender(); },
   "stop-timer": () => { stopRestTimer(); refreshActionBar(); },
+
+  "complete-workout": () => {
+    const w = currentWorkout();
+    if (!w) return;
+    stopRestTimer();
+    const s = ensureSession(w);
+    completeSession(s, true);
+    toast(s.day ? `Day ${s.day} done` : "Workout logged");
+    location.hash = s.runId && s.runId === store.state.activeRunId ? "#/today" : "#/calendar";
+  },
+  "uncomplete-workout": () => {
+    const w = currentWorkout();
+    if (!w?.session) return;
+    completeSession(w.session, false);
+    toast("Marked not done");
+    rerender();
+  },
+  "delete-session": (btn) => guarded(async () => {
+    const w = currentWorkout();
+    if (!w?.session) return;
+    const ok = await confirmDialog({ title: "Delete this workout log?", body: "The sets and notes logged in this workout will be removed. If it counted as a program day, that day becomes undone.", confirmLabel: "Delete", danger: true });
+    if (!ok) return;
+    deleteSession(w.session);
+    toast("Workout log deleted");
+    void btn;
+    location.hash = "#/calendar";
+  }),
+  "free-workout": (btn) => {
+    const date = btn.dataset.date && btn.dataset.date <= todayISO() ? btn.dataset.date : todayISO();
+    const s = createSession({ runId: null, day: null, workoutKey: null, title: "Free workout", plan: [], date });
+    location.hash = `#/log/${s.id}`;
+  },
+
+  /* ---- rest days ---- */
+  "rest-done": (btn) => { const run = activeRun(); if (!run) return; setRestDay(run, Number(btn.dataset.day), "done"); toast("Rest day complete"); rerender(); },
+  "rest-skip": (btn) => {
+    const run = activeRun(); if (!run) return;
+    setRestDay(run, Number(btn.dataset.day), "skipped");
+    toast("Rest day skipped. Here's your next workout");
+    if (location.hash === "#/today" || location.hash === "") rerender(); else location.hash = "#/today";
+  },
+  "rest-undo": (btn) => { const run = activeRun(); if (!run) return; setRestDay(run, Number(btn.dataset.day), null); toast("Rest day undone"); rerender(); },
+
+  /* ---- calendar / plan ---- */
+  "month-prev": (btn) => { calendarAction(btn.dataset.action!); rerender(); },
+  "month-next": (btn) => { calendarAction(btn.dataset.action!); rerender(); },
+  "month-today": (btn) => { calendarAction(btn.dataset.action!); rerender(); },
+  "pick-date": (btn) => { calendarAction("pick-date", btn.dataset.date); rerender(); $(`[data-date="${btn.dataset.date}"]`)?.focus(); },
+  cycle: (btn) => { selectCycle(Number(btn.dataset.cycle)); rerender(); $(`#cycle-tab-${btn.dataset.cycle}`)?.focus(); },
+
+  /* ---- warm-up / stretch timers ---- */
   "session-start": () => startSession(),
   "session-restart": () => startSession(),
   "session-pause": () => sessionControl("pause"),
@@ -140,68 +212,67 @@ const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
   "session-prev": () => sessionControl("prev"),
   "session-sound": () => sessionControl("sound"),
 
-  "complete-workout": () => {
-    const sched = currentWorkout();
-    if (!sched) return;
-    stopRestTimer();
-    setDayComplete(sched.day, true);
-    toast(`Day ${sched.day} complete`);
-    location.hash = sched.day === currentDay() ? "#/today" : "#/calendar";
+  /* ---- programs ---- */
+  "end-run": () => guarded(async () => {
+    const run = activeRun();
+    if (!run) return;
+    const ok = await confirmDialog({ title: `End ${run.name}?`, body: "It moves to your history with everything you logged. You can start any program afterwards.", confirmLabel: "End program", danger: true });
+    if (!ok) return;
+    endRun(run);
+    resetViews();
+    toast("Program ended");
+    rerender();
+  }),
+  "restart-run": () => guarded(async () => {
+    const run = activeRun();
+    if (!run) { toast("No program is running.", "error"); return; }
+    const ok = await confirmDialog({ title: `Restart ${run.name}?`, body: "You'll start again from Day 1 today. The current run moves to your history with everything you logged.", confirmLabel: "Restart", danger: true });
+    if (!ok) return;
+    startRun(run.programRef, todayISO());
+    resetViews();
+    toast("Program restarted");
+    location.hash = "#/today";
+  }),
+  "b-save": () => {
+    const res = builderSave();
+    const err = $("#b-err");
+    if ("error" in res) {
+      if (err) { err.textContent = res.error; err.hidden = false; }
+      toast(res.error, "error");
+      return;
+    }
+    toast(res.isNew ? "Program saved" : "Changes saved");
+    location.hash = res.isNew ? `#/program/start/${programRef(res.id)}` : "#/programs";
   },
-  "uncomplete-workout": () => {
-    const sched = currentWorkout();
-    if (!sched) return;
-    setDayComplete(sched.day, false);
-    toast(`Day ${sched.day} marked not done`);
-    render({ keepScroll: true });
-  },
-  "toggle-rest": (btn) => {
-    const day = Number(btn.dataset.day);
-    const next = !isDayComplete(day);
-    setDayComplete(day, next);
-    toast(next ? "Rest day complete" : "Rest day unmarked");
-    render({ keepScroll: true });
-  },
-  cycle: (btn) => {
-    selectCycle(Number(btn.dataset.cycle));
-    render({ keepScroll: true });
-    $(`#cycle-tab-${btn.dataset.cycle}`)?.focus();
-  },
+  "b-delete": () => guarded(async () => {
+    const id = builderDeleteTarget();
+    if (!id) return;
+    const run = activeRun();
+    if (run?.programRef === programRef(id) && run.status === "active") {
+      toast("End this program before deleting it.", "error");
+      return;
+    }
+    const ok = await confirmDialog({ title: "Delete this program?", body: "Past runs and logged workouts stay in your history.", confirmLabel: "Delete", danger: true });
+    if (!ok) return;
+    delete store.state.programs[id];
+    changed(`program:${id}`);
+    discardDraft();
+    toast("Program deleted");
+    location.hash = "#/programs";
+  }),
 
-  "start-again": () => guarded(async () => {
-    const ok = await confirmDialog({
-      title: "Start the programme again?",
-      body: "Your finished programme is kept in your history, and today becomes the new Day 1. Body weight entries are kept.",
-      confirmLabel: "Start again",
-    });
-    if (!ok) return;
-    await startProgramme(todayISO(), unit(), "completed");
-    selectCycle(null);
-    toast("New programme started");
-    render();
-  }),
-  reset: () => guarded(async () => {
-    const ok = await confirmDialog({
-      title: "Reset your programme?",
-      body: "This will remove your current progress and workout logs. Settings and body weight entries are kept.",
-      confirmLabel: "Reset",
-      danger: true,
-    });
-    if (!ok) return;
-    await startProgramme(store.state.settings.startDate, unit(), "cancelled");
-    selectCycle(null);
-    toast("Programme reset");
-  }),
+  /* ---- account / data ---- */
+  "start-again": () => { location.hash = "#/programs"; },
   "clear-all": () => guarded(async () => {
     const ok = await confirmDialog({
       title: "Clear all data?",
-      body: `All programmes, workout logs and body weight entries will be permanently deleted${cloudEnabled ? " from your account" : " from this browser"}. Export a copy first if you might want it.`,
+      body: `All programs, workout logs and body weight entries will be permanently deleted${cloudEnabled ? " from your account" : " from this browser"}. Export a copy first if you might want it.`,
       confirmLabel: "Delete everything",
       danger: true,
     });
     if (!ok) return;
     await clearAllData();
-    selectCycle(null);
+    resetViews();
     applyTheme();
     location.hash = "#/today";
     render();
@@ -220,7 +291,6 @@ const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
     await signOut(); // the SIGNED_OUT event clears state and shows the login screen
   }),
   "retry-load": () => { location.reload(); },
-
   export: () => {
     const blob = new Blob([JSON.stringify(store.state, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -234,7 +304,7 @@ const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
   "clear-shopping": () => {
     store.state.shopping = {};
     changed("local");
-    render({ keepScroll: true });
+    rerender();
   },
   "delete-weight": (btn) => guarded(async () => {
     const date = btn.dataset.date!;
@@ -243,7 +313,7 @@ const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
     store.state.bodyWeight = store.state.bodyWeight.filter((e) => e.date !== date);
     changed(`bw:${date}`);
     toast("Entry deleted");
-    render({ keepScroll: true });
+    rerender();
   }),
 };
 
@@ -256,7 +326,13 @@ view.addEventListener("click", (e) => {
   }
   const el = (e.target as Element).closest<HTMLElement>("[data-action]");
   if (!el || !view.contains(el)) return;
-  const fn = Actions[el.dataset.action!];
+  const action = el.dataset.action!;
+  if (action.startsWith("b-") && action !== "b-save" && action !== "b-delete") {
+    e.preventDefault();
+    if (builderAction(action, el)) rerender();
+    return;
+  }
+  const fn = Actions[action];
   if (fn) { e.preventDefault(); void fn(el); }
 });
 
@@ -266,6 +342,7 @@ view.addEventListener("input", (e) => {
   const t = e.target as HTMLElement;
   if (t.matches(".stepper__input")) onSetInput(t as HTMLInputElement);
   else if (t.matches('textarea[data-field="notes"]')) onNotesInput(t as HTMLTextAreaElement);
+  else if (t.dataset.b) builderInput(t as HTMLInputElement);
 });
 
 view.addEventListener("keydown", (e) => {
@@ -273,8 +350,9 @@ view.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && t.matches(".stepper__input")) { e.preventDefault(); focusNextField(t as HTMLInputElement); }
   // Arrow keys move between cycle tabs (tablist pattern).
   if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && t.matches(".cycle-tab")) {
+    const max = Number(t.closest<HTMLElement>(".cycle-tabs")?.dataset.cycles ?? 5);
     const c = Number(t.dataset.cycle) + (e.key === "ArrowRight" ? 1 : -1);
-    if (c >= 1 && c <= 5) { selectCycle(c); render({ keepScroll: true }); $(`#cycle-tab-${c}`)?.focus(); }
+    if (c >= 1 && c <= max) { selectCycle(c); rerender(); $(`#cycle-tab-${c}`)?.focus(); }
   }
 });
 
@@ -295,21 +373,10 @@ async function onChangeEvent(t: HTMLInputElement) {
     if (c) c.textContent = `${Object.keys(store.state.shopping).length} ticked`;
     return;
   }
+  if (t.dataset.b) { builderInput(t); if (t.dataset.b === "lenmode" || t.dataset.b === "repeats" || t.dataset.b === "pattern") rerender(); return; }
+  if (t.dataset.change === "session-date") { onSessionDate(t); return; }
 
   const setting = t.dataset.setting;
-  if (setting === "startDate") {
-    const err = $("#set-start-err")!;
-    const valid = !!parseISO(t.value);
-    err.textContent = valid ? "" : "Enter a valid date.";
-    err.hidden = valid;
-    t.setAttribute("aria-invalid", String(!valid));
-    if (!valid) return;
-    store.state.settings.startDate = t.value;
-    selectCycle(null);
-    changed("settings");
-    toast(`Day 1 is now ${fmtDate(t.value)}`);
-    return;
-  }
   if (setting === "weightUnit") {
     store.state.settings.weightUnit = t.value as WeightUnit;
     changed("profile");
@@ -344,20 +411,19 @@ async function onChangeEvent(t: HTMLInputElement) {
       toast("Import failed", "error");
       return;
     }
+    const n = Object.values(next.sessions).filter((s) => s.status === "done").length;
     const ok = await confirmDialog({
       title: "Replace your current data?",
-      body: `This file has ${Object.values(next.days).filter((d) => d.completed).length} completed days, starting ${fmtDate(next.settings.startDate)}. Your current programme and body weight entries will be replaced.`,
+      body: `This file has ${n} logged workouts and ${Object.keys(next.runs).length} program run(s). Your current programs, logs and body weight entries will be replaced.`,
       confirmLabel: "Replace",
       danger: true,
     });
     if (!ok) return;
-    await guarded(async () => {
-      await replaceWithImport(next);
-      applyTheme();
-      selectCycle(null);
-      toast("Import successful");
-      location.hash = "#/today";
-    });
+    replaceWithImport(next);
+    applyTheme();
+    resetViews();
+    toast("Import successful");
+    location.hash = "#/today";
   }
 }
 
@@ -366,7 +432,7 @@ async function onChangeEvent(t: HTMLInputElement) {
  * ------------------------------------------------------------------------- */
 
 function formError(msg: string, focus?: HTMLElement | null) {
-  const err = $("#auth-err") ?? $("#ob-err") ?? $("#bw-err");
+  const err = $("#auth-err") ?? $("#ob-err") ?? $("#bw-err") ?? $("#sp-err") ?? $("#ax-err");
   if (err) { err.textContent = msg; err.hidden = !msg; }
   if (msg && focus) { focus.setAttribute("aria-invalid", "true"); focus.focus(); }
 }
@@ -436,18 +502,42 @@ async function onSubmit(form: HTMLFormElement) {
 
   if (kind === "onboard") {
     const date = val("startDate");
-    if (!parseISO(date)) return formError("Choose a valid start date.", el("startDate"));
-    const u = (form.elements.namedItem("unit") as RadioNodeList).value === "lb" ? "lb" : "kg";
-    setBusy(form, true);
-    try {
-      await startProgramme(date, u);
-      location.hash = "#/today";
-      render();
-      toast("Programme set. Let's go.");
-    } catch (err) {
-      formError((err as Error).message);
-      setBusy(form, false);
+    const choice = (form.elements.namedItem("program") as RadioNodeList).value;
+    if (choice !== "none" && !parseISO(date)) return formError("Choose a valid start date.", el("startDate"));
+    store.state.settings.weightUnit = (form.elements.namedItem("unit") as RadioNodeList).value === "lb" ? "lb" : "kg";
+    changed("profile");
+    if (choice === "builtin") startRun(BUILTIN_60, date);
+    else if (choice === "template") {
+      const id = uuid();
+      const now = new Date().toISOString();
+      store.state.programs[id] = { ...pplTemplate(), id, createdAt: now, updatedAt: now };
+      changed(`program:${id}`);
+      startRun(programRef(id), date);
     }
+    store.state.onboarded = true;
+    changed("local");
+    location.hash = "#/today";
+    render();
+    toast(choice === "none" ? "All set. Log a free workout any time." : "Program started. Let's go.");
+    return;
+  }
+
+  if (kind === "start-program") {
+    const date = val("startDate");
+    if (!parseISO(date)) return formError("Choose a valid start date.", el("startDate"));
+    const ref = form.dataset.ref!;
+    startRun(ref, date);
+    resetViews();
+    toast("Program started");
+    location.hash = "#/today";
+    return;
+  }
+
+  if (kind === "add-exercise") {
+    const error = addExercise(form);
+    if (error) return formError(error);
+    toast("Exercise added");
+    rerender();
     return;
   }
 
@@ -464,7 +554,7 @@ async function onSubmit(form: HTMLFormElement) {
     else store.state.bodyWeight.push(entry);
     changed(`bw:${date}`);
     toast(i >= 0 ? "Entry updated" : "Weight logged");
-    render({ keepScroll: true });
+    rerender();
   }
 }
 
@@ -478,4 +568,3 @@ function showOk(msg: string) {
  * ------------------------------------------------------------------------- */
 
 onStatus(renderSyncStatus);
-

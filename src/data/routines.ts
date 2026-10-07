@@ -33,7 +33,7 @@ const PULSE: RoutineMove[] = [
 const WARMUP_TIP = "Before your first exercise, do 1–2 light sets with about half your working weight.";
 const STRETCH_TIP = "Hold each stretch gently. Mild tension only, never pain, and don't bounce.";
 
-export const WARMUPS: Record<WorkoutCode, Routine> = {
+export const WARMUPS: Record<WorkoutCode | "full", Routine> = {
   A: {
     kind: "warmup", key: "A", title: "Shoulders & traps warm-up", finishTip: WARMUP_TIP,
     moves: [
@@ -77,6 +77,18 @@ export const WARMUPS: Record<WorkoutCode, Routine> = {
       { name: "Reverse lunges", cue: "Step back, lower gently, alternate legs.", seconds: 40 },
       { name: "Glute bridges", cue: "Drive through your heels and squeeze at the top.", seconds: 30 },
       { name: "Ankle circles", cue: "Circle each ankle both ways.", seconds: 20, eachSide: true },
+    ],
+  },
+  full: {
+    kind: "warmup", key: "full", title: "Full-body warm-up", finishTip: WARMUP_TIP,
+    moves: [
+      ...PULSE,
+      { name: "Arm circles", cue: "Small to big circles. Switch direction halfway.", seconds: 30 },
+      { name: "Cat-cow", cue: "On hands and knees, round then arch your spine slowly.", seconds: 30 },
+      { name: "Leg swings, front to back", cue: "Hold something for balance. Swing loose and controlled.", seconds: 20, eachSide: true },
+      { name: "Bodyweight squats", cue: "Sit back and down, chest up, knees tracking your toes.", seconds: 40 },
+      { name: "Incline push-ups", cue: "Hands on a bench. Smooth, easy reps.", seconds: 30 },
+      { name: "Glute bridges", cue: "Drive through your heels and squeeze at the top.", seconds: 30 },
     ],
   },
 };
@@ -136,7 +148,7 @@ export const STRETCHES: Record<WorkoutCode | "full", Routine> = {
 };
 
 export function getRoutine(kind: string, key: string): Routine | null {
-  if (kind === "warmup") return WARMUPS[key as WorkoutCode] ?? null;
+  if (kind === "warmup") return WARMUPS[key as WorkoutCode | "full"] ?? null;
   if (kind === "stretch") return STRETCHES[key as WorkoutCode | "full"] ?? null;
   return null;
 }

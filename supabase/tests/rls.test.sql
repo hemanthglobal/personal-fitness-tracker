@@ -3,7 +3,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(43);
 
 -- Two test users. Profiles are created by the on_auth_user_created trigger.
 insert into auth.users (id, email) values
@@ -92,6 +92,40 @@ select throws_ok($$ select * from public.programmes $$, '42501', null, 'anon can
 select throws_ok($$ select * from public.exercise_sets $$, '42501', null, 'anon cannot read workout data');
 select throws_ok($$ insert into public.body_weight_entries (user_id, recorded_at, weight, unit)
   values ('aaaaaaaa-0000-4000-8000-000000000001', '2026-09-26', 70, 'kg') $$, '42501', null, 'anon cannot write private data');
+
+-- ============================== 0004: programs, runs, sessions ==============================
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-4000-8000-000000000001","role":"authenticated"}', true);
+
+select lives_ok($$ insert into public.custom_programs (id, name, definition)
+  values ('a4000000-0000-4000-8000-000000000001', 'PPL', '{"workouts":[],"pattern":[],"repeats":8}') $$, 'A can save a custom program');
+select lives_ok($$ insert into public.run_days (programme_id, day_number, status, occurred_on)
+  values ('a1000000-0000-4000-8000-000000000001', 3, 'skipped', '2026-09-27') $$, 'A can skip a day in own run');
+select lives_ok($$ insert into public.training_sessions (id, title, session_date, status)
+  values ('a5000000-0000-4000-8000-000000000001', 'Free workout', '2026-09-28', 'done') $$, 'A can log a free workout');
+select lives_ok($$ insert into public.session_sets (session_id, exercise_code, set_number, weight_kg, reps, completed)
+  values ('a5000000-0000-4000-8000-000000000001', 'custom_hip_thrust', 1, 60, 12, true) $$, 'A can log a custom exercise');
+
+select throws_ok($$ insert into public.session_sets (session_id, exercise_code, set_number, reps)
+  values ('a5000000-0000-4000-8000-000000000001', 'Bad Code!', 2, 8) $$, '23514', null, 'malformed exercise code rejected');
+select throws_ok($$ insert into public.session_sets (session_id, exercise_code, set_number, reps)
+  values ('a5000000-0000-4000-8000-000000000001', 'custom_hip_thrust', 11, 8) $$, '23514', null, 'set number above 10 rejected');
+select throws_ok($$ insert into public.training_sessions (id, programme_id, title, session_date)
+  values ('a5000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000001', 'x', '2026-09-28') $$, '23514', null,
+  'a program session must say which day it counts as');
+
+select set_config('request.jwt.claims', '{"sub":"bbbbbbbb-0000-4000-8000-000000000002","role":"authenticated"}', true);
+select is((select count(*) from public.custom_programs), 0::bigint, 'B cannot read A''s programs');
+select is((select count(*) from public.training_sessions), 0::bigint, 'B cannot read A''s sessions');
+select is((select count(*) from public.run_days), 0::bigint, 'B cannot read A''s run days');
+select throws_ok($$ insert into public.session_sets (session_id, exercise_code, set_number, reps)
+  values ('a5000000-0000-4000-8000-000000000001', 'pushup', 1, 8) $$, '23503', null, 'B cannot add sets to A''s session');
+select throws_ok($$ insert into public.run_days (programme_id, day_number, status, occurred_on)
+  values ('a1000000-0000-4000-8000-000000000001', 4, 'done', '2026-09-28') $$, '23503', null, 'B cannot tick days in A''s run');
+
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+select throws_ok($$ select * from public.training_sessions $$, '42501', null, 'anon cannot read sessions');
 
 select * from finish();
 rollback;

@@ -19,19 +19,19 @@ export function renderSettings(): string {
       <button class="btn btn--ghost" data-action="sign-out">Log out</button>
     </section>` : ""}
 
-    <h2 class="section__title section__title--spaced">Programme</h2>
+    <h2 class="section__title section__title--spaced">Preferences</h2>
     <section class="card form">
-      <div class="field">
-        <label for="set-start">Start date</label>
-        <input id="set-start" type="date" class="input" value="${esc(s.startDate)}" data-setting="startDate" aria-describedby="set-start-help set-start-err">
-        <p class="field__help" id="set-start-help">Day 1 is this date. Logs stay attached to their programme day.</p>
-        <p class="field__err" id="set-start-err" role="alert" hidden></p>
-      </div>
       <fieldset class="field"><legend>Weight unit</legend>${segmented("weightUnit", s.weightUnit, [["kg", "kg"], ["lb", "lb"]])}
         <p class="field__help">Existing logs are converted for display.</p></fieldset>
       <fieldset class="field"><legend>Theme</legend>${segmented("theme", s.theme, [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</fieldset>
       <fieldset class="field"><legend>Timer sounds</legend>${segmented("sound", s.sound ? "on" : "off", [["on", "On"], ["off", "Off"]])}
         <p class="field__help">Beeps for warm-up, stretching and the end of your rest. The screen stays on while a timer runs.</p></fieldset>
+    </section>
+
+    <h2 class="section__title section__title--spaced">Programs</h2>
+    <section class="card form">
+      <p class="muted">Start dates, switching programs and building your own live under Programs.</p>
+      <a class="btn btn--ghost" href="#/programs">Open programs</a>
     </section>
 
     <h2 class="section__title section__title--spaced">Your data</h2>
@@ -50,11 +50,11 @@ export function renderSettings(): string {
     <h2 class="section__title section__title--spaced">Danger zone</h2>
     <section class="card form">
       <div class="danger-row">
-        <div><p class="danger-row__title">Reset programme</p><p class="muted">Removes day completion and workout logs. Keeps settings and body weight.</p></div>
-        <button class="btn btn--danger-ghost" data-action="reset">Reset</button>
+        <div><p class="danger-row__title">Restart current program</p><p class="muted">Starts your active program again from Day 1 today. Your logged workouts stay in your history.</p></div>
+        <button class="btn btn--danger-ghost" data-action="restart-run">Restart</button>
       </div>
       <div class="danger-row">
-        <div><p class="danger-row__title">Clear all data</p><p class="muted">Deletes all programmes, logs and body weight${cloudEnabled ? " from your account" : ""}, and returns to setup.</p></div>
+        <div><p class="danger-row__title">Clear all data</p><p class="muted">Deletes all programs, workout logs and body weight${cloudEnabled ? " from your account" : ""}, and returns to setup.</p></div>
         <button class="btn btn--danger-ghost" data-action="clear-all">Clear</button>
       </div>
     </section>
