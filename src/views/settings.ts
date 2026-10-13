@@ -24,8 +24,21 @@ export function renderSettings(): string {
       <fieldset class="field"><legend>Weight unit</legend>${segmented("weightUnit", s.weightUnit, [["kg", "kg"], ["lb", "lb"]])}
         <p class="field__help">Existing logs are converted for display.</p></fieldset>
       <fieldset class="field"><legend>Theme</legend>${segmented("theme", s.theme, [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</fieldset>
+      <div class="field">
+        <label for="set-goal">Weekly goal</label>
+        <select id="set-goal" class="input" data-setting="weeklyGoal">
+          ${[1, 2, 3, 4, 5, 6, 7].map((n) => `<option value="${n}" ${s.weeklyGoal === n ? "selected" : ""}>${n} workout${n === 1 ? "" : "s"} a week</option>`).join("")}
+        </select>
+        <p class="field__help">Shown on Today with your streak, and in the Sunday summary.</p>
+      </div>
       <fieldset class="field"><legend>Timer sounds</legend>${segmented("sound", s.sound ? "on" : "off", [["on", "On"], ["off", "Off"]])}
         <p class="field__help">Beeps for warm-up, stretching and the end of your rest. The screen stays on while a timer runs.</p></fieldset>
+    </section>
+
+    <h2 class="section__title section__title--spaced">Reminders</h2>
+    <section class="card form">
+      <p class="muted">Motivation at ${esc(store.state.notify.quoteTime)}, gym reminder before ${esc(store.state.notify.gymTime)}, and a nightly “did you skip?” check.</p>
+      <a class="btn btn--ghost" href="#/reminders">Reminder settings</a>
     </section>
 
     <h2 class="section__title section__title--spaced">Programs</h2>

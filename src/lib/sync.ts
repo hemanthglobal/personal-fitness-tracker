@@ -10,8 +10,10 @@
  * the last write wins. Ids are generated on the device, so everything works offline, including
  * starting a program or logging a free workout.
  */
-import { DbError, deleteAllUserData, fetchSnapshot, pushBodyWeight, pushProfile, pushProgram, pushRun, pushSession } from "./database";
-import { defaultState, onChange, store, type AppState, type ChangeKey } from "./state";
+import {
+  DbError, deleteAllUserData, fetchSnapshot, pushBodyWeight, pushMark, pushNotify, pushProfile, pushProgram, pushRun, pushSession,
+} from "./database";
+import { defaultState, nextLabel, onChange, store, type AppState, type ChangeKey } from "./state";
 import { cacheKey, clearNamespace, loadCache, readJSON, rememberTheme, writeJSON } from "./storage";
 import { cloudEnabled } from "./supabase";
 
@@ -117,7 +119,12 @@ function carry(key: ChangeKey, from: AppState, to: AppState) {
     to.bodyWeight = to.bodyWeight.filter((e) => e.date !== id);
     const mine = from.bodyWeight.find((e) => e.date === id);
     if (mine) to.bodyWeight.push(mine);
-  } else if (key === "profile") to.settings.weightUnit = from.settings.weightUnit;
+  } else if (kind === "mark") {
+    if (from.marks[id]) to.marks[id] = from.marks[id]!; else delete to.marks[id];
+  } else if (key === "profile") {
+    to.settings.weightUnit = from.settings.weightUnit;
+    to.settings.weeklyGoal = from.settings.weeklyGoal;
+  } else if (key === "notify") to.notify = from.notify;
 }
 
 const pickActive = (s: AppState) =>
@@ -161,6 +168,8 @@ onChange((key) => {
   persistCacheSoon();
   if (!cloudEnabled || !ctx.userId || !SYNCABLE(key)) return;
   enqueue(key);
+  // Reminders name the next workout: refresh it on the server when the program moves on.
+  if (key.startsWith("run:") && store.state.notify.enabled) enqueue("notify");
   persistQueue();
   setStatus(navigator.onLine ? "saving" : "offline");
   scheduleFlush(key.startsWith("session:") ? 700 : 250);
@@ -234,7 +243,9 @@ async function pushKey(key: ChangeKey, userId: string) {
   if (kind === "run") return pushRun(userId, id, s.runs[id] ?? null);
   if (kind === "session") return pushSession(userId, id, s.sessions[id] ?? null);
   if (kind === "bw") return pushBodyWeight(userId, id, s.bodyWeight.find((e) => e.date === id) ?? null);
-  if (key === "profile") return pushProfile(userId, s.settings.weightUnit);
+  if (kind === "mark") return pushMark(userId, id, s.marks[id] ?? null);
+  if (key === "notify") return pushNotify(userId, s.notify, nextLabel());
+  if (key === "profile") return pushProfile(userId, s.settings.weightUnit, s.settings.weeklyGoal);
 }
 
 window.addEventListener("online", () => { backoff = 0; scheduleFlush(0); });
@@ -277,6 +288,9 @@ export function replaceWithImport(next: AppState) {
     for (const id of new Set([...Object.keys(prev.runs), ...Object.keys(next.runs)])) keys.add(`run:${id}`);
     for (const id of new Set([...Object.keys(prev.sessions), ...Object.keys(next.sessions)])) keys.add(`session:${id}`);
     for (const d of new Set([...prev.bodyWeight, ...next.bodyWeight].map((e) => e.date))) keys.add(`bw:${d}`);
+    for (const d of new Set([...Object.keys(prev.marks), ...Object.keys(next.marks)])) keys.add(`mark:${d}`);
+    next.notify = prev.notify; // reminders are per account, not part of a backup
+    keys.add("notify");
     // Deletes of old runs must happen before new runs are inserted (one active run per user).
     ctx.queue = [...keys];
     persistQueue();

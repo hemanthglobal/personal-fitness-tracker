@@ -2,6 +2,7 @@ import { routineMinutes, WARMUPS } from "../data/routines";
 import type { Slot } from "../data/programs";
 import { INTENSITY } from "../data/workout-data";
 import { finishLine, relDate, restHero, upcomingList } from "../components/day-card";
+import { habitCard, installCard, quoteLine, skipPrompt } from "../components/habits";
 import { ICON } from "../components/icons";
 import { emptyState, pageHeader, pill, progressBar } from "../components/ui";
 import {
@@ -27,7 +28,9 @@ export function renderToday(): string {
         <p class="hero__meta">Run 60 Days to Fit, use the Push/Pull/Legs template, or build your own.</p>
         <a class="btn btn--primary btn--lg btn--block" href="#/programs">Choose a program</a>
       </section>
+      ${skipPrompt()}
       ${todayDone(todays, null)}
+      ${habitCard()}
       <div class="section">${freeButton()}</div>`;
   }
 
@@ -84,7 +87,8 @@ export function renderToday(): string {
   const whenLabel = later ? ` · up next ${relDate(planned).toLowerCase()}` : "";
 
   if (slot.type === "rest") {
-    return `${head}${todayDone(todays, run)}${restHero(run, day, `Recovery${whenLabel}`, "Rest day")}${slipNote}
+    return `${head}${quoteLine()}${skipPrompt()}${todayDone(todays, run)}${restHero(run, day, `Recovery${whenLabel}`, "Rest day")}${slipNote}
+      ${habitCard()}${installCard()}
       ${upcomingList(run, day + 1, 3)}<div class="section">${freeButton()}</div>`;
   }
 
@@ -95,6 +99,8 @@ export function renderToday(): string {
 
   return `
     ${head}
+    ${quoteLine()}
+    ${skipPrompt()}
     ${todayDone(todays, run)}
     <section class="hero">
       <div class="hero__row"><p class="hero__eyebrow">${slot.letter ? `Workout ${slot.letter}` : esc(runProgramName(run))}${whenLabel}</p>${slot.intensity ? pill(slot.intensity) : ""}</div>
@@ -108,6 +114,8 @@ export function renderToday(): string {
       </div>
     </section>
     ${slipNote}
+    ${habitCard()}
+    ${installCard()}
     ${lastTimeCard(slot)}
     ${upcomingList(run, day + 1, 3)}
     <div class="section">${freeButton()}</div>`;

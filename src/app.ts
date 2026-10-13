@@ -6,8 +6,8 @@ import { toast } from "./components/toast";
 import { emptyState, pageHeader } from "./components/ui";
 import { sendPasswordReset, signIn, signOut, signUp, updatePassword } from "./lib/auth";
 import {
-  activeRun, changed, completeSession, createSession, deleteSession, displayToKg, endRun, normalizeState, setRestDay, startRun,
-  store, unit, uuid, type WeightUnit,
+  activeRun, changed, completeSession, createSession, deleteSession, displayToKg, endRun, normalizeState, projection, runSlot,
+  sessionForDay, setMark, setRestDay, setSessionDate, startRun, store, unit, uuid, type NotifySettings, type WeightUnit,
 } from "./lib/state";
 import { clearAllData, flush, onStatus, replaceWithImport, session } from "./lib/sync";
 import { cloudEnabled } from "./lib/supabase";
@@ -26,6 +26,11 @@ import {
 import { renderSettings } from "./views/settings";
 import { renderToday } from "./views/today";
 import { renderWeight } from "./views/weight";
+import { hydrateReminders, renderInstall, renderReminders } from "./views/reminders";
+import { INSTALL_DISMISSED_KEY } from "./components/habits";
+import { onInstallChange, promptInstall } from "./lib/install";
+import { disablePushOnThisDevice, enablePushOnThisDevice, sendTestNotification } from "./lib/push";
+import { writeJSON } from "./lib/storage";
 import { renderRoutines, renderSession, sessionControl, startSession, stopSession } from "./views/session";
 import {
   addExercise, addSet, currentWorkout, ensureSession, focusNextField, onNotesInput, onSessionDate, onSetInput, refreshActionBar,
@@ -65,6 +70,8 @@ const ROUTES: Record<string, (param?: string, ...rest: string[]) => string> = {
   settings: renderSettings,
   routines: renderRoutines,
   session: renderSession,
+  reminders: renderReminders,
+  install: renderInstall,
 };
 const NAV_OF: Record<string, NavKey> = {
   today: "today", day: "today", swap: "today", calendar: "calendar", log: "calendar", progress: "progress",
@@ -125,6 +132,7 @@ export function render({ keepScroll = false } = {}) {
   const h1 = $("h1", view);
   document.title = `${h1 ? (h1 as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "60 Days"} · 60 Days Tracker`;
   if (!keepScroll) window.scrollTo(0, 0);
+  if (chrome && name === "reminders") void hydrateReminders();
 }
 
 window.addEventListener("hashchange", () => {
@@ -186,6 +194,64 @@ const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
     const s = createSession({ runId: null, day: null, workoutKey: null, title: "Free workout", plan: [], date });
     location.hash = `#/log/${s.id}`;
   },
+
+  /* ---- days with nothing logged ---- */
+  "mark-skip": (btn) => { setMark(btn.dataset.date!, "skipped"); toast("Marked as skipped"); rerender(); },
+  "mark-undo": (btn) => { setMark(btn.dataset.date!, null); toast("Mark removed"); rerender(); },
+  "mark-rest": (btn) => {
+    const date = btn.dataset.date!;
+    const run = activeRun();
+    const next = run ? projection(run).next : null;
+    const slot = run && next ? runSlot(run, next) : null;
+    // If the program's next day is a rest day, this counts as that rest day; otherwise just mark the date.
+    if (run && next && slot?.type === "rest") setRestDay(run, next, "done", date);
+    else setMark(date, "rest");
+    toast("Rest day noted");
+    rerender();
+  },
+  "log-on": (btn) => {
+    const date = btn.dataset.date && btn.dataset.date <= todayISO() ? btn.dataset.date : todayISO();
+    const run = activeRun();
+    const next = run && run.status === "active" ? projection(run).next : null;
+    const slot = run && next ? runSlot(run, next) : null;
+    if (run && next && slot?.type === "workout") {
+      // Log the program's next workout on that date.
+      const existing = sessionForDay(run, next);
+      if (existing) setSessionDate(existing, date);
+      else createSession({ runId: run.id, day: next, workoutKey: slot.key, title: slot.name, plan: slot.exercises, date });
+      location.hash = `#/day/${next}`;
+      return;
+    }
+    const s = createSession({ runId: null, day: null, workoutKey: null, title: "Free workout", plan: [], date });
+    location.hash = `#/log/${s.id}`;
+  },
+
+  /* ---- reminders / install ---- */
+  "notify-on": () => guarded(async () => {
+    const res = await enablePushOnThisDevice();
+    const msg: Record<string, string> = {
+      denied: "Notifications were blocked. Allow them in your browser's site settings.",
+      unsupported: "This browser can't receive notifications.",
+      "not-configured": "Reminders aren't set up on the server yet.",
+      error: "Couldn't turn on notifications. Try again.",
+    };
+    if (res !== "ok") { toast(msg[res]!, "error"); rerender(); return; }
+    store.state.notify.enabled = true;
+    changed("notify");
+    toast("Notifications on for this device");
+    rerender();
+  }),
+  "notify-off": () => guarded(async () => {
+    await disablePushOnThisDevice();
+    toast("Notifications off on this device");
+    rerender();
+  }),
+  "notify-test": () => guarded(async () => {
+    const n = await sendTestNotification();
+    toast(n ? `Test sent to ${n} device${n === 1 ? "" : "s"}` : "No devices are subscribed yet.", n ? "info" : "error");
+  }),
+  "install-app": () => guarded(async () => { const ok = await promptInstall(); if (ok) toast("Installed"); rerender(); }),
+  "install-dismiss": () => { writeJSON(INSTALL_DISMISSED_KEY, true); rerender(); },
 
   /* ---- rest days ---- */
   "rest-done": (btn) => { const run = activeRun(); if (!run) return; setRestDay(run, Number(btn.dataset.day), "done"); toast("Rest day complete"); rerender(); },
@@ -288,6 +354,7 @@ const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
       });
       if (!ok) return;
     }
+    await disablePushOnThisDevice(); // stop this device getting this account's reminders
     await signOut(); // the SIGNED_OUT event clears state and shows the login screen
   }),
   "retry-load": () => { location.reload(); },
@@ -375,12 +442,28 @@ async function onChangeEvent(t: HTMLInputElement) {
   }
   if (t.dataset.b) { builderInput(t); if (t.dataset.b === "lenmode" || t.dataset.b === "repeats" || t.dataset.b === "pattern") rerender(); return; }
   if (t.dataset.change === "session-date") { onSessionDate(t); return; }
+  if (t.dataset.notify) {
+    const f = t.dataset.notify as keyof NotifySettings;
+    const n = store.state.notify as unknown as Record<string, unknown>;
+    if (t.type === "checkbox") n[f] = t.checked;
+    else if (f === "remindBefore") n[f] = Number(t.value);
+    else if (/^([01]\d|2[0-3]):[0-5]\d$/.test(t.value)) n[f] = t.value;
+    changed("notify");
+    toast("Reminder settings saved");
+    rerender();
+    return;
+  }
 
   const setting = t.dataset.setting;
   if (setting === "weightUnit") {
     store.state.settings.weightUnit = t.value as WeightUnit;
     changed("profile");
     toast(`Showing weights in ${t.value}`);
+    return;
+  }
+  if (setting === "weeklyGoal") {
+    const g = Number(t.value);
+    if (Number.isInteger(g) && g >= 1 && g <= 7) { store.state.settings.weeklyGoal = g; changed("profile"); toast(`Weekly goal: ${g}`); }
     return;
   }
   if (setting === "sound") {
@@ -568,3 +651,9 @@ function showOk(msg: string) {
  * ------------------------------------------------------------------------- */
 
 onStatus(renderSyncStatus);
+
+// The install prompt can arrive after the first render.
+onInstallChange(() => {
+  const name = location.hash.replace(/^#\/?/, "").split("/")[0] || "today";
+  if (["today", "install", "more"].includes(name) && phase === "app") rerender();
+});

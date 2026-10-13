@@ -33,7 +33,8 @@ export function calendarAction(action: string, date?: string) {
 type Entry =
   | { kind: "session"; session: Session; short: string }
   | { kind: "rest"; run: Run; day: number; status: "done" | "skipped" }
-  | { kind: "planned"; run: Run; day: number; short: string; title: string; rest: boolean };
+  | { kind: "planned"; run: Run; day: number; short: string; title: string; rest: boolean }
+  | { kind: "mark"; mark: "skipped" | "rest" };
 
 /** Short label for a session's workout, e.g. "AL", "Push", "Free". */
 function sessionShort(s: Session): string {
@@ -57,6 +58,8 @@ function entriesFor(iso: string, today: string): Entry[] {
       if (d.date === iso && !d.sessionId) out.push({ kind: "rest", run, day: Number(n), status: d.status });
     }
   }
+  const mark = store.state.marks[iso];
+  if (mark) out.push({ kind: "mark", mark });
   const run = activeRun();
   if (run && run.status === "active" && iso >= today) {
     for (const [n, date] of Object.entries(projection(run).dates)) {
@@ -137,6 +140,9 @@ function dayCell(iso: string, today: string) {
     } else if (primary.kind === "rest") {
       cls.push(primary.status === "done" ? "is-rest" : "is-skipped");
       tag = primary.status === "done" ? "Rest" : "Skip";
+    } else if (primary.kind === "mark") {
+      cls.push(primary.mark === "rest" ? "is-rest" : "is-skipped", "is-marked");
+      tag = primary.mark === "rest" ? "Rest" : "Skip";
     } else {
       cls.push("is-planned");
       if (primary.rest) cls.push("is-rest");
@@ -145,6 +151,7 @@ function dayCell(iso: string, today: string) {
     for (const e of entries) {
       parts.push(e.kind === "session" ? `${e.session.status === "done" ? "trained" : "in progress"}: ${e.session.title}`
         : e.kind === "rest" ? (e.status === "done" ? "rest day" : "rest day skipped")
+        : e.kind === "mark" ? (e.mark === "rest" ? "rest day" : "skipped")
         : `planned: ${e.title}`);
     }
   }
@@ -176,6 +183,12 @@ function detailCard(iso: string, today: string) {
         <span class="day-item__tag is-rest">${e.status === "done" ? "Rest" : "Skip"}</span>
         <span class="day-item__main"><strong>${e.status === "done" ? "Rest day" : "Rest day skipped"}</strong><small>${esc(e.run.name)} · Day ${e.day}</small></span>${ICON.chevron}</a>`;
     }
+    if (e.kind === "mark") {
+      return `<div class="day-item">
+        <span class="day-item__tag ${e.mark === "rest" ? "is-rest" : ""}">${e.mark === "rest" ? "Rest" : "Skip"}</span>
+        <span class="day-item__main"><strong>${e.mark === "rest" ? "Rest day" : "Skipped"}</strong><small>Marked by you</small></span>
+        <button class="btn btn--ghost btn--sm" data-action="mark-undo" data-date="${iso}">Undo</button></div>`;
+    }
     const slot = runSlot(e.run, e.day);
     return `<a class="day-item is-planned" href="#/day/${e.day}">
       <span class="day-item__tag ${e.rest ? "is-rest" : ""}">${esc(e.rest ? "Rest" : e.short)}</span>
@@ -186,8 +199,12 @@ function detailCard(iso: string, today: string) {
   const empty = iso < today
     ? `<p class="muted">No training logged on this day.</p>`
     : `<p class="muted">Nothing planned for this day.</p>`;
+  const nothingLogged = !entries.some((e) => e.kind !== "planned");
   const logBtn = iso <= today
-    ? `<button class="btn btn--ghost btn--block" data-action="free-workout" data-date="${iso}">${ICON.plus}<span>Log a free workout on this day</span></button>`
+    ? `<div class="btn-row">
+        <button class="btn btn--ghost" data-action="log-on" data-date="${iso}">${ICON.plus}<span>Log a workout</span></button>
+        ${nothingLogged && iso < today ? `<button class="btn btn--ghost" data-action="mark-skip" data-date="${iso}">Mark as skipped</button>` : ""}
+      </div>`
     : "";
   return `<section class="card day-detail">
     <p class="eyebrow">${esc(when)} · ${esc(fmtLongDate(iso))}</p>

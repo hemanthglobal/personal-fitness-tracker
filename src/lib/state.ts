@@ -54,10 +54,34 @@ export interface Session {
   updatedAt: string;
 }
 
+export type DayMark = "skipped" | "rest";
+
+export interface NotifySettings {
+  /** True once this account has enabled reminders (per device permission is separate). */
+  enabled: boolean;
+  quoteEnabled: boolean;
+  quoteTime: string; // "HH:MM"
+  gymEnabled: boolean;
+  gymTime: string;
+  remindBefore: number; // minutes
+  skipCheckEnabled: boolean;
+  skipCheckTime: string;
+  weeklyEnabled: boolean;
+}
+
+export const defaultNotify = (): NotifySettings => ({
+  enabled: false, quoteEnabled: true, quoteTime: "18:00", gymEnabled: true, gymTime: "20:00", remindBefore: 30,
+  skipCheckEnabled: true, skipCheckTime: "22:00", weeklyEnabled: true,
+});
+
 export interface AppState {
   version: number;
   onboarded: boolean;
-  settings: { weightUnit: WeightUnit; theme: Theme; /** Timer beeps (local only). */ sound: boolean };
+  settings: { weightUnit: WeightUnit; theme: Theme; /** Timer beeps (local only). */ sound: boolean; /** Workouts per week target (synced via profile). */ weeklyGoal: number };
+  /** Reminder preferences (synced to notification_settings). */
+  notify: NotifySettings;
+  /** Days marked skipped / rest when nothing else was logged. */
+  marks: Record<string, DayMark>;
   programs: Record<string, CustomProgram>;
   runs: Record<string, Run>;
   activeRunId: string | null;
@@ -71,7 +95,9 @@ export function defaultState(): AppState {
   return {
     version: STATE_VERSION,
     onboarded: false,
-    settings: { weightUnit: "kg", theme: "system", sound: true },
+    settings: { weightUnit: "kg", theme: "system", sound: true, weeklyGoal: 4 },
+    notify: defaultNotify(),
+    marks: {},
     programs: {},
     runs: {},
     activeRunId: null,
@@ -228,6 +254,25 @@ function migrateV2(raw: Record<string, unknown>, s: AppState) {
   s.activeRunId = run.id;
 }
 
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+export function normNotify(raw: unknown): NotifySettings {
+  const d = defaultNotify();
+  if (!isObj(raw)) return d;
+  const time = (v: unknown, f: string) => (typeof v === "string" && TIME_RE.test(v.slice(0, 5)) ? v.slice(0, 5) : f);
+  const bool = (v: unknown, f: boolean) => (typeof v === "boolean" ? v : f);
+  return {
+    enabled: bool(raw.enabled, d.enabled),
+    quoteEnabled: bool(raw.quoteEnabled, d.quoteEnabled),
+    quoteTime: time(raw.quoteTime, d.quoteTime),
+    gymEnabled: bool(raw.gymEnabled, d.gymEnabled),
+    gymTime: time(raw.gymTime, d.gymTime),
+    remindBefore: Number.isInteger(raw.remindBefore) && (raw.remindBefore as number) >= 0 && (raw.remindBefore as number) <= 180 ? (raw.remindBefore as number) : d.remindBefore,
+    skipCheckEnabled: bool(raw.skipCheckEnabled, d.skipCheckEnabled),
+    skipCheckTime: time(raw.skipCheckTime, d.skipCheckTime),
+    weeklyEnabled: bool(raw.weeklyEnabled, d.weeklyEnabled),
+  };
+}
+
 /** Validate + normalise raw state (from cache or an imported backup). Throws if unusable. */
 export function normalizeState(raw: unknown): AppState {
   if (!isObj(raw)) throw new Error("Not an object");
@@ -241,6 +286,11 @@ export function normalizeState(raw: unknown): AppState {
   s.settings.weightUnit = settings.weightUnit === "lb" ? "lb" : "kg";
   s.settings.theme = settings.theme === "light" || settings.theme === "dark" ? settings.theme : "system";
   s.settings.sound = settings.sound !== false;
+  s.settings.weeklyGoal = Number.isInteger(settings.weeklyGoal) && (settings.weeklyGoal as number) >= 1 && (settings.weeklyGoal as number) <= 7 ? (settings.weeklyGoal as number) : 4;
+  s.notify = normNotify(raw.notify);
+  if (isObj(raw.marks)) {
+    for (const [d, v] of Object.entries(raw.marks)) if (isDate(d) && (v === "skipped" || v === "rest")) s.marks[d] = v;
+  }
 
   if (raw.version < 3) {
     // A v2 cache that never finished setup has nothing to migrate (no programme was started).
@@ -268,7 +318,7 @@ export function normalizeState(raw: unknown): AppState {
  * Store + change notification
  * ------------------------------------------------------------------------- */
 
-export type ChangeKey = "profile" | "local" | `run:${string}` | `session:${string}` | `program:${string}` | `bw:${string}`;
+export type ChangeKey = "profile" | "local" | "notify" | `run:${string}` | `session:${string}` | `program:${string}` | `bw:${string}` | `mark:${string}`;
 type Listener = (key: ChangeKey) => void;
 
 export const store: { state: AppState } = { state: defaultState() };
@@ -335,8 +385,8 @@ function maybeFinish(run: Run) {
 }
 
 /** Rest day: mark done (rested) or skipped (trained instead). Undo with status null. */
-export function setRestDay(run: Run, day: number, status: "done" | "skipped" | null) {
-  if (status) run.days[day] = { status, date: todayISO(), sessionId: null };
+export function setRestDay(run: Run, day: number, status: "done" | "skipped" | null, date = todayISO()) {
+  if (status) run.days[day] = { status, date, sessionId: null };
   else delete run.days[day];
   if (!status && run.status === "finished") { run.status = "active"; run.endedAt = null; st().activeRunId ??= run.id; }
   maybeFinish(run);
@@ -496,6 +546,45 @@ export function knownExercises(base: { code: string; name: string }[]): { code: 
   for (const p of Object.values(st().programs)) for (const w of p.workouts) for (const e of w.exercises) if (!map.has(e.code)) map.set(e.code, e.name);
   for (const s of Object.values(st().sessions)) for (const e of s.plan) if (!map.has(e.code)) map.set(e.code, e.name);
   return [...map].map(([code, name]) => ({ code, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/* ---------------------------------------------------------------------------
+ * Day marks (skipped / rest) and "was anything logged on this date?"
+ * ------------------------------------------------------------------------- */
+
+export function setMark(date: string, mark: DayMark | null) {
+  if (mark) st().marks[date] = mark;
+  else delete st().marks[date];
+  changed(`mark:${date}`);
+}
+
+/** Dates (YYYY-MM-DD) that have anything logged: a finished workout, a run day (rest done/skipped) or a mark. */
+export function loggedDates(): Set<string> {
+  const out = new Set<string>();
+  for (const s of Object.values(st().sessions)) if (s.status === "done") out.add(s.date);
+  for (const r of Object.values(st().runs)) for (const d of Object.values(r.days)) out.add(d.date);
+  for (const d of Object.keys(st().marks)) out.add(d);
+  return out;
+}
+
+/** First date the user started tracking (earliest run start or session), or null. */
+export function trackingSince(): string | null {
+  const dates = [
+    ...Object.values(st().runs).map((r) => r.startDate),
+    ...Object.values(st().sessions).map((s) => s.date),
+  ].sort();
+  return dates[0] ?? null;
+}
+
+/** Short label of the active run's next day, for reminder notifications. */
+export function nextLabel(): { label: string | null; isRest: boolean } {
+  const run = activeRun();
+  if (!run || run.status !== "active") return { label: null, isRest: false };
+  const next = projection(run).next;
+  const slot = next ? runSlot(run, next) : null;
+  if (!slot) return { label: null, isRest: false };
+  if (slot.type === "rest") return { label: `Day ${next} · Rest day`, isRest: true };
+  return { label: `Day ${next} · ${slot.name}${slot.intensity ? ` (${slot.intensity === "light" ? "Light" : "Heavy"})` : ""}`, isRest: false };
 }
 
 export const sortedWeights = () => st().bodyWeight.slice().sort((a, b) => a.date.localeCompare(b.date));

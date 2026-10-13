@@ -5,7 +5,7 @@
 import { BUILTIN_60, type CustomProgram } from "../data/programs";
 import { requireClient } from "./supabase";
 import {
-  defaultState, lbToKg, normProgram, type AppState, type BodyWeightEntry, type ExerciseLog, type Run, type Session, type WeightUnit,
+  defaultState, lbToKg, normNotify, normProgram, type AppState, type DayMark, type NotifySettings, type BodyWeightEntry, type ExerciseLog, type Run, type Session, type WeightUnit,
 } from "./state";
 
 /** Error carrying a Postgres/PostgREST code so the sync layer can tell transient from permanent failures. */
@@ -21,6 +21,13 @@ function check<T>(res: { data: T; error: { code?: string; message: string } | nu
 }
 
 const db = () => requireClient();
+
+/**
+ * True when an error means "this table/column doesn't exist yet" (a migration hasn't been run).
+ * Optional features (reminders, day marks, weekly goal) then switch off instead of breaking the app.
+ */
+const notMigrated = (e: { code?: string } | null | undefined) =>
+  !!e && ["PGRST205", "PGRST204", "42P01", "42703"].includes(e.code ?? "");
 const kg3 = (n: number) => Math.round(n * 1000) / 1000;
 
 const toDbStatus = { active: "active", finished: "completed", ended: "cancelled" } as const;
@@ -36,8 +43,8 @@ interface SessionRow {
 }
 
 export async function fetchSnapshot(userId: string): Promise<AppState> {
-  const [profile, programs, runs, runDays, sessions, sets, notes, weights] = await Promise.all([
-    db().from("profiles").select("weight_unit").eq("id", userId).maybeSingle(),
+  const [profile, programs, runs, runDays, sessions, sets, notes, weights, notify, marks] = await Promise.all([
+    db().from("profiles").select("weight_unit, weekly_goal").eq("id", userId).maybeSingle(),
     db().from("custom_programs").select("id, name, definition, created_at, updated_at"),
     db().from("programmes").select("id, name, program_ref, start_date, status, ended_at, created_at").order("created_at"),
     db().from("run_days").select("programme_id, day_number, status, occurred_on, session_id"),
@@ -45,11 +52,30 @@ export async function fetchSnapshot(userId: string): Promise<AppState> {
     db().from("session_sets").select("session_id, exercise_code, set_number, weight_kg, reps, completed"),
     db().from("session_notes").select("session_id, exercise_code, notes"),
     db().from("body_weight_entries").select("recorded_at, weight, unit, notes").order("recorded_at"),
+    db().from("notification_settings").select("*").eq("user_id", userId).maybeSingle(),
+    db().from("calendar_marks").select("mark_date, status"),
   ]);
 
   const state = defaultState();
-  const p = check(profile) as { weight_unit: WeightUnit } | null;
-  if (p) state.settings.weightUnit = p.weight_unit === "lb" ? "lb" : "kg";
+  // Migration 0005 not run yet: read the profile without weekly_goal, and skip reminders / marks.
+  const profileRes = notMigrated(profile.error)
+    ? await db().from("profiles").select("weight_unit").eq("id", userId).maybeSingle()
+    : profile;
+  const p = check(profileRes) as { weight_unit: WeightUnit; weekly_goal?: number } | null;
+  if (p) {
+    state.settings.weightUnit = p.weight_unit === "lb" ? "lb" : "kg";
+    if (p.weekly_goal) state.settings.weeklyGoal = p.weekly_goal;
+  }
+  const n = notMigrated(notify.error) ? null : (check(notify) as Record<string, unknown> | null);
+  if (n) {
+    state.notify = normNotify({
+      enabled: n.enabled, quoteEnabled: n.quote_enabled, quoteTime: n.quote_time, gymEnabled: n.gym_enabled, gymTime: n.gym_time,
+      remindBefore: n.remind_before_min, skipCheckEnabled: n.skip_check_enabled, skipCheckTime: n.skip_check_time, weeklyEnabled: n.weekly_summary_enabled,
+    });
+  }
+  for (const m of notMigrated(marks.error) ? [] : (check(marks) as { mark_date: string; status: string }[])) {
+    if (m.status === "skipped" || m.status === "rest") state.marks[m.mark_date] = m.status;
+  }
 
   for (const r of check(programs) as { id: string; name: string; definition: Record<string, unknown>; created_at: string; updated_at: string }[]) {
     const prog = normProgram({ ...r.definition, name: r.name, createdAt: r.created_at, updatedAt: r.updated_at }, r.id);
@@ -104,8 +130,35 @@ export async function fetchSnapshot(userId: string): Promise<AppState> {
  * Push one changed object (upsert, or delete when it no longer exists locally)
  * ------------------------------------------------------------------------- */
 
-export async function pushProfile(userId: string, weightUnit: WeightUnit) {
-  check(await db().from("profiles").update({ weight_unit: weightUnit }).eq("id", userId));
+export async function pushProfile(userId: string, weightUnit: WeightUnit, weeklyGoal: number) {
+  const res = await db().from("profiles").update({ weight_unit: weightUnit, weekly_goal: weeklyGoal }).eq("id", userId);
+  if (notMigrated(res.error)) { check(await db().from("profiles").update({ weight_unit: weightUnit }).eq("id", userId)); return; }
+  check(res);
+}
+
+/** Reminder settings + the next workout label the reminders mention. */
+export async function pushNotify(userId: string, n: NotifySettings, next: { label: string | null; isRest: boolean }) {
+  let timezone = "UTC";
+  try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { /* keep UTC */ }
+  const res = await db().from("notification_settings").upsert({
+    user_id: userId, enabled: n.enabled, timezone,
+    quote_enabled: n.quoteEnabled, quote_time: n.quoteTime,
+    gym_enabled: n.gymEnabled, gym_time: n.gymTime, remind_before_min: n.remindBefore,
+    skip_check_enabled: n.skipCheckEnabled, skip_check_time: n.skipCheckTime,
+    weekly_summary_enabled: n.weeklyEnabled,
+    next_label: next.label?.slice(0, 120) ?? null, next_is_rest: next.isRest,
+  }, { onConflict: "user_id" });
+  if (notMigrated(res.error)) return; // reminders not set up on the server yet
+  check(res);
+}
+
+/** Skipped / rest mark for a date, or delete it. */
+export async function pushMark(userId: string, date: string, mark: DayMark | null) {
+  const res = mark
+    ? await db().from("calendar_marks").upsert({ user_id: userId, mark_date: date, status: mark }, { onConflict: "user_id,mark_date" })
+    : await db().from("calendar_marks").delete().eq("mark_date", date);
+  if (notMigrated(res.error)) return; // kept on this device until migration 0005 is run
+  check(res);
 }
 
 export async function pushProgram(userId: string, id: string, p: CustomProgram | null) {
@@ -177,4 +230,6 @@ export async function deleteAllUserData() {
   check(await db().from("programmes").delete().not("id", "is", null));
   check(await db().from("custom_programs").delete().not("id", "is", null));
   check(await db().from("body_weight_entries").delete().not("id", "is", null));
+  const marks = await db().from("calendar_marks").delete().not("id", "is", null);
+  if (!notMigrated(marks.error)) check(marks);
 }

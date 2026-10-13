@@ -9,3 +9,6 @@ dist/
 fitness-tracker-backup-*.json
 supabase/.temp/
 supabase/.branches/
+# Push/cron secrets
+.env.push.local
+supabase/cron_setup.sql

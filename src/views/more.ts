@@ -2,6 +2,7 @@ import { CYCLE_PATTERN, INTENSITY, MINDSET_TIPS, SHOPPING, SUPPLEMENTS, VIDEO_UR
 import { ICON } from "../components/icons";
 import { healthNotice, listLink, pageHeader, pill } from "../components/ui";
 import { store } from "../lib/state";
+import { installState } from "../lib/install";
 import { session } from "../lib/sync";
 import { cloudEnabled } from "../lib/supabase";
 import { esc, plural } from "../lib/utils";
@@ -12,6 +13,8 @@ export function renderMore(): string {
     ${pageHeader("More")}
     <ul class="card list-rows">
       ${listLink("#/programs", ICON.calendar, "Programs", "Switch, build your own, history")}
+      ${listLink("#/reminders", ICON.bell, "Reminders", store.state.notify.enabled ? "On" : "Motivation, gym reminder, skipped days")}
+      ${installState() !== "installed" ? listLink("#/install", ICON.download, "Install the app", "Home-screen app, needed for iPhone reminders") : ""}
       ${listLink("#/weight", ICON.scale, "Body weight", n ? plural(n, "entry", "entries") : "Optional log")}
       ${listLink("#/routines", ICON.timer, "Warm-up & stretching", "Guided timers for every workout")}
       ${listLink("#/about", ICON.info, "60 Days to Fit guide", "How the built-in program works")}
