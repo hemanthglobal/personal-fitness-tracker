@@ -12,6 +12,8 @@ import {
 import { clearAllData, flush, onStatus, replaceWithImport, session } from "./lib/sync";
 import { cloudEnabled } from "./lib/supabase";
 import { rememberTheme } from "./lib/storage";
+import { addRipples } from "./lib/material";
+import { applyAppearance, DEFAULT_PALETTE, isPalette, onSystemModeChange } from "./lib/theme";
 import { $, fmtDate, parseISO, todayISO } from "./lib/utils";
 import { renderAuth, type AuthScreen } from "./views/auth";
 import { calendarAction, renderCalendar, resetCalendar } from "./views/calendar";
@@ -84,11 +86,14 @@ function parseRoute() {
 }
 
 export function applyTheme() {
-  const t = store.state.settings.theme;
-  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
-  else delete document.documentElement.dataset.theme;
-  rememberTheme(t);
+  const { theme, palette } = store.state.settings;
+  applyAppearance(palette, theme);
+  rememberTheme(theme, palette);
 }
+onSystemModeChange(() => {
+  applyTheme();
+  if (parseRoute().name === "settings") rerender();
+});
 
 export function render({ keepScroll = false } = {}) {
   stopRestTimer();
@@ -126,6 +131,7 @@ export function render({ keepScroll = false } = {}) {
   view.classList.remove("is-entering");
   void view.offsetWidth;
   view.classList.add("is-entering");
+  addRipples(view);
   document.body.classList.toggle("is-bare", !chrome);
   document.body.classList.toggle("has-actionbar", !!$("#actionbar", view));
   setActiveNav(nav);
@@ -368,6 +374,21 @@ const Actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast("Data exported");
   },
+  "reset-appearance": () => {
+    store.state.settings.theme = "system";
+    store.state.settings.palette = DEFAULT_PALETTE;
+    changed("local");
+    applyTheme();
+    toast("Appearance reset to the default");
+    rerender();
+  },
+  "demo-toggle": (btn) => {
+    const demo = btn.closest<HTMLElement>(".demo");
+    if (!demo) return;
+    const paused = demo.classList.toggle("is-paused");
+    btn.setAttribute("aria-pressed", String(paused));
+    btn.setAttribute("aria-label", paused ? "Play the demonstration" : "Pause the demonstration");
+  },
   "clear-shopping": () => {
     store.state.shopping = {};
     changed("local");
@@ -467,7 +488,7 @@ async function onChangeEvent(t: HTMLInputElement) {
     return;
   }
   if (setting === "sound") {
-    store.state.settings.sound = t.value === "on";
+    store.state.settings.sound = t.tagName === "MD-SWITCH" ? (t as unknown as { selected: boolean }).selected : t.value === "on";
     changed("local");
     return;
   }
@@ -475,6 +496,14 @@ async function onChangeEvent(t: HTMLInputElement) {
     store.state.settings.theme = t.value as "system" | "light" | "dark";
     changed("local");
     applyTheme();
+    rerender();
+    return;
+  }
+  if (setting === "palette" && isPalette(t.value)) {
+    store.state.settings.palette = t.value;
+    changed("local");
+    applyTheme();
+    rerender();
     return;
   }
 

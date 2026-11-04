@@ -66,7 +66,7 @@ export function persistCacheNow() {
   clearTimeout(cacheTimer);
   if (cloudEnabled && !ctx.userId) return; // signed out: nothing user-specific to keep
   if (!writeJSON(ctx.key, store.state)) problem("Couldn't save on this device. Browser storage may be full or blocked.");
-  rememberTheme(store.state.settings.theme);
+  rememberTheme(store.state.settings.theme, store.state.settings.palette);
 }
 const persistQueue = () => { if (ctx.userId) writeJSON(`${ctx.key}.queue`, ctx.queue); };
 
@@ -140,6 +140,7 @@ export async function pull(): Promise<boolean> {
   const local = store.state;
   const next = await fetchSnapshot(ctx.userId);
   next.settings.theme = local.settings.theme;
+  next.settings.palette = local.settings.palette;
   next.settings.sound = local.settings.sound;
   next.shopping = local.shopping;
   for (const key of ctx.queue) carry(key, local, next);
@@ -267,10 +268,11 @@ export async function clearAllData() {
     }
     ctx.queue = [];
   }
-  const { theme, sound } = store.state.settings;
+  const { theme, palette, sound } = store.state.settings;
   clearNamespace(ctx.key);
   store.state = defaultState();
   store.state.settings.theme = theme;
+  store.state.settings.palette = palette;
   store.state.settings.sound = sound;
   persistCacheNow();
   persistQueue();
@@ -280,6 +282,7 @@ export async function clearAllData() {
 export function replaceWithImport(next: AppState) {
   const prev = store.state;
   next.settings.theme = prev.settings.theme;
+  next.settings.palette = prev.settings.palette;
   next.settings.sound = prev.settings.sound;
   store.state = next;
   if (cloudEnabled && ctx.userId) {

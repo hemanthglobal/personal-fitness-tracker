@@ -12,6 +12,7 @@ import {
 } from "../data/programs";
 import { CYCLE_LENGTH, TOTAL_DAYS } from "../data/workout-data";
 import { projectRun, type Projection, type RunDay } from "./schedule";
+import { DEFAULT_PALETTE, isPalette } from "./theme";
 import { addDays, daysBetween, isObj, parseISO, round2, toISO, todayISO } from "./utils";
 
 export const STATE_VERSION = 3;
@@ -77,7 +78,7 @@ export const defaultNotify = (): NotifySettings => ({
 export interface AppState {
   version: number;
   onboarded: boolean;
-  settings: { weightUnit: WeightUnit; theme: Theme; /** Timer beeps (local only). */ sound: boolean; /** Workouts per week target (synced via profile). */ weeklyGoal: number };
+  settings: { weightUnit: WeightUnit; theme: Theme; /** Colour theme id (local only, see lib/theme.ts). */ palette: string; /** Timer beeps (local only). */ sound: boolean; /** Workouts per week target (synced via profile). */ weeklyGoal: number };
   /** Reminder preferences (synced to notification_settings). */
   notify: NotifySettings;
   /** Days marked skipped / rest when nothing else was logged. */
@@ -95,7 +96,7 @@ export function defaultState(): AppState {
   return {
     version: STATE_VERSION,
     onboarded: false,
-    settings: { weightUnit: "kg", theme: "system", sound: true, weeklyGoal: 4 },
+    settings: { weightUnit: "kg", theme: "system", palette: DEFAULT_PALETTE, sound: true, weeklyGoal: 4 },
     notify: defaultNotify(),
     marks: {},
     programs: {},
@@ -285,6 +286,7 @@ export function normalizeState(raw: unknown): AppState {
   s.onboarded = raw.onboarded !== false;
   s.settings.weightUnit = settings.weightUnit === "lb" ? "lb" : "kg";
   s.settings.theme = settings.theme === "light" || settings.theme === "dark" ? settings.theme : "system";
+  s.settings.palette = isPalette(settings.palette) ? settings.palette : DEFAULT_PALETTE;
   s.settings.sound = settings.sound !== false;
   s.settings.weeklyGoal = Number.isInteger(settings.weeklyGoal) && (settings.weeklyGoal as number) >= 1 && (settings.weeklyGoal as number) <= 7 ? (settings.weeklyGoal as number) : 4;
   s.notify = normNotify(raw.notify);

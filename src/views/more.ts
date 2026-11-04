@@ -27,7 +27,7 @@ export function renderMore(): string {
     </ul>
     <h2 class="section__title section__title--spaced">App</h2>
     <ul class="card list-rows">
-      ${listLink("#/settings", ICON.gear, "Settings", cloudEnabled ? esc(session.email) : "Start date, units, theme, backup")}
+      ${listLink("#/settings", ICON.gear, "Settings", cloudEnabled ? esc(session.email) : "Appearance, units, backup")}
     </ul>`;
 }
 

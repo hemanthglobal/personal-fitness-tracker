@@ -1,4 +1,5 @@
 import { BREATHING, videoFor } from "../data/exercise-guide";
+import { demoFor, demoFrames } from "../data/exercise-demos";
 import type { ProgramExercise } from "../data/programs";
 import { INTENSITY } from "../data/workout-data";
 import type { Intensity } from "../types/workout";
@@ -29,6 +30,32 @@ export function exerciseCard(ex: ProgramExercise, index: number, o: CardOpts) {
   const I = o.intensity ? INTENSITY[o.intensity] : null;
   const breath = BREATHING[ex.code];
   const video = videoFor(ex.code);
+  const demo = demoFor(ex.code);
+  const search = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${ex.name} exercise proper form`)}`;
+  const searchLink = `<a class="ex__video" href="${esc(search)}" target="_blank" rel="noopener noreferrer" data-video
+    aria-label="Search YouTube for ${esc(ex.name)} videos (opens in a new tab)">${ICON.play}<span>Find videos on YouTube</span>${ICON.link}</a>`;
+  let demoHtml = searchLink;
+  if (demo) {
+    const [start, end] = demoFrames(demo);
+    demoHtml = `<details class="demo">
+        <summary><span class="demo__icon">${ICON.playSolid}</span><span>How to do it</span><span class="tag tag--quiet">Demo</span>${ICON.chevron}</summary>
+        <div class="demo__body">
+          <figure class="demo__media">
+            <div class="demo__stage">
+              <img src="${start}" alt="${esc(ex.name)}: start position" width="480" height="320" loading="lazy" decoding="async">
+              <img src="${end}" alt="${esc(ex.name)}: end position" width="480" height="320" loading="lazy" decoding="async" class="demo__end">
+              <md-icon-button class="demo__toggle" data-action="demo-toggle" aria-pressed="false" aria-label="Pause the demonstration">
+                <span class="demo__pause">${ICON.pause}</span><span class="demo__play">${ICON.playSolid}</span>
+              </md-icon-button>
+            </div>
+            <figcaption>${demo.match === "similar" ? `<strong>Similar movement:</strong> ${esc(demo.title)}. ` : ""}Start and end position.
+              Photos: <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener noreferrer">Free Exercise DB</a> (public domain).</figcaption>
+          </figure>
+          <ol class="demo__steps">${demo.steps.map((st) => `<li>${esc(st)}</li>`).join("")}</ol>
+          ${searchLink}
+        </div>
+      </details>`;
+  }
 
   const prevHtml = prev
     ? `<div class="ex__prev">
@@ -68,6 +95,7 @@ export function exerciseCard(ex: ProgramExercise, index: number, o: CardOpts) {
           <div><dt><span aria-hidden="true">↑</span> Out</dt><dd>${esc(breath.out)}</dd></div>
         </dl>
       </div>` : ""}
+      ${demoHtml}
       ${video ? `<a class="ex__video" href="${esc(video)}" target="_blank" rel="noopener noreferrer" data-video
         aria-label="Watch ${esc(ex.name)} demo (opens in a new tab)">${ICON.play}<span>Watch exercise demo</span>${ICON.link}</a>` : ""}
       ${prevHtml}

@@ -251,3 +251,29 @@ AppState {
 - Keys: `npm run push:keys` → `.env.push.local` (git-ignored; contains the VAPID private key and CRON_SECRET; never print it).
   `VITE_VAPID_PUBLIC_KEY` goes in `.env.local` and the GitHub Variables.
 - User setup steps: `docs/REMINDERS_SETUP.md`. 79 tests.
+
+---
+
+## 11. Appearance, Material Web & exercise demos (added 2026-11-04)
+
+- **Appearance** (Settings → Appearance), modelled on PetXcel's settings: two independent choices,
+  *Light or dark* (`settings.theme`: light/dark/system) and *Colour theme* (`settings.palette`). Both are local-only
+  (never synced). Palettes: **Classic Gold** (the original hand-made theme, default, tokens in `main.css`),
+  Material Violet, Ocean Teal, Forest Green, Ember Red, Midnight (dark only), High Contrast.
+  - `src/lib/theme.ts`: palette list, `resolveMode`, `applyAppearance` (sets `data-palette` + resolved `data-mode`
+    on `<html>`, updates `theme-color`), system-mode listener. The inline script in `index.html` does the same before
+    first paint (its palette list is tested against `PALETTES`).
+  - Material palettes are generated from seed colours with Google's `@material/material-color-utilities`:
+    `npm run themes` → `src/styles/themes.css` + `src/data/theme-swatches.ts`. Don't edit those by hand.
+  - Material palettes also get Material 3 shapes (pill buttons via `--btn-radius`, 16/28 px cards). Classic keeps its own.
+- **Material Web** (`@material/web`, Google's Material 3 web components), registered in `src/lib/material.ts`:
+  ripples on buttons/links/nav (`addRipples` after each render), `md-switch` (Timer sounds), `md-outlined-button`,
+  `md-icon-button`. `--md-sys-color-*` tokens point at the app tokens in `main.css`, so they follow every palette.
+- **Exercise demos** (each exercise card → "How to do it"): two photos (start/end) cross-fading as a loop, pause button,
+  side by side with reduced motion, plus written steps. Source: Free Exercise DB (public domain, Unlicense), resized to
+  480 px WebP in `public/exercises/` (≈1.2 MB, cached by the service worker once viewed). Data in
+  `src/data/exercise-demos.ts` (`match: "similar"` is shown as "Similar movement: …" where the dataset has no exact
+  match: rope high pull, Scott press, standing single-arm cable row, spider curl, incline French press).
+  Every card (custom exercises too) also has "Find videos on YouTube" (a search link, not a claimed demo).
+  `EXERCISE_VIDEOS` still works for verified links the user adds.
+- Tests: `tests/appearance.test.ts` (demo for every code + frames on disk, palettes, no-flash list, migration). 86 tests.

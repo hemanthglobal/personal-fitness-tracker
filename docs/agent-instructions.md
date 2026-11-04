@@ -23,7 +23,8 @@ the app keeps a local-only mode for when Supabase isn't configured.
 - Rest days are first-class and never forced.
 - Never fabricate history, progress, weight suggestions or nutrition targets. The PDF's meal-plan
   numbers are labelled "Source example".
-- Don't invent exercise video URLs. Only the PDF's general URL (muscleandfitness.com/60days) is used
+- Don't invent exercise video URLs. (Update 2026-11-04: each exercise has a public-domain photo demo from
+  Free Exercise DB, labelled "Similar movement" where not exact; see HANDOFF §11.) Only the PDF's general URL (muscleandfitness.com/60days) is used
   until verified per-exercise links are added to `EXERCISE_VIDEOS` in `src/data/exercise-guide.ts`.
 - (v2) Every exercise card shows a breathing cue, labelled as a general tip because it isn't from the
   PDF. The demo button appears only when a verified URL exists, opens in a new tab, and is blocked

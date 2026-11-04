@@ -1,5 +1,6 @@
 /* Boot: local-only mode, or Supabase Auth -> load user data -> render. */
 import "./styles/main.css";
+import { addRipples } from "./lib/material";
 import type { Session } from "@supabase/supabase-js";
 import { applyTheme, getPhase, render, setPhase } from "./app";
 import { toast } from "./components/toast";
@@ -9,6 +10,7 @@ import { cloudEnabled } from "./lib/supabase";
 import { $, todayISO } from "./lib/utils";
 
 onProblem((msg) => toast(msg, "error"));
+addRipples(document.querySelector(".nav") ?? document);
 
 if (!cloudEnabled) {
   const error = initLocal();

@@ -3,6 +3,53 @@ import { store } from "../lib/state";
 import { session } from "../lib/sync";
 import { cloudEnabled } from "../lib/supabase";
 import { esc } from "../lib/utils";
+import { ICON } from "../components/icons";
+import { SWATCHES } from "../data/theme-swatches";
+import { PALETTES, paletteDef, resolveMode, systemDark } from "../lib/theme";
+
+/* Preview colours for the original theme (main.css); the others are generated. */
+const CLASSIC = {
+  light: { bg: "#f3f2ee", surface: "#ffffff", primary: "#ffc61a", soft: "#fff2c7" },
+  dark: { bg: "#0f0f0e", surface: "#181817", primary: "#ffc61a", soft: "#3a300c" },
+};
+
+function appearance(): string {
+  const s = store.state.settings;
+  const def = paletteDef(s.palette);
+  const darkOnly = def.modes.length === 1;
+  const shown = resolveMode(s.palette, s.theme);
+  const note = darkOnly ? `${def.name} is a dark-only theme, so this setting is paused.`
+    : s.theme === "system" ? `Follows your device: ${systemDark() ? "dark" : "light"} right now.` : "";
+  const modes: [string, string][] = [["light", "Light"], ["dark", "Dark"], ["system", "System"]];
+  return `
+    <section class="card form appearance">
+      <fieldset class="field"><legend>Light or dark</legend>
+        <div class="segmented">${modes.map(([v, l]) =>
+          `<label><input type="radio" name="theme" value="${v}" ${s.theme === v ? "checked" : ""} ${darkOnly ? "disabled" : ""} data-setting="theme"><span>${l}</span></label>`).join("")}</div>
+        ${note ? `<p class="field__help" id="mode-note">${esc(note)}</p>` : ""}
+      </fieldset>
+      <fieldset class="field"><legend>Colour theme</legend>
+        <div class="palettes">${PALETTES.map((p) => {
+          const sw = (p.id === "classic" ? CLASSIC : SWATCHES[p.id]!)[p.modes.includes(shown) ? shown : p.modes[0]!];
+          return `<label class="palette">
+            <input type="radio" name="palette" value="${p.id}" ${s.palette === p.id ? "checked" : ""} data-setting="palette">
+            <span class="palette__card"><md-ripple></md-ripple>
+              <span class="palette__preview" aria-hidden="true" style="background:${sw.bg}">
+                <i style="background:${sw.surface}"></i><i style="background:${sw.soft}"></i>
+                <b class="palette__bar" style="background:${sw.primary}"></b><b class="palette__dot" style="background:${sw.primary}"></b>
+              </span>
+              <span class="palette__name"><b>${esc(p.name)}</b><span class="palette__check">${ICON.check}<span class="sr-only">selected</span></span></span>
+              <span class="palette__desc">${esc(p.desc)}${p.id === "classic" ? " · Default" : ""}</span>
+            </span>
+          </label>`;
+        }).join("")}</div>
+      </fieldset>
+      <div class="appearance__foot">
+        <p class="field__help">Saved on this device. It never changes your data.</p>
+        <md-outlined-button data-action="reset-appearance">Use the default theme</md-outlined-button>
+      </div>
+    </section>`;
+}
 
 function segmented(name: string, value: string, opts: [string, string][]) {
   return `<div class="segmented">${opts.map(([v, l]) =>
@@ -19,11 +66,13 @@ export function renderSettings(): string {
       <button class="btn btn--ghost" data-action="sign-out">Log out</button>
     </section>` : ""}
 
+    <h2 class="section__title section__title--spaced">Appearance</h2>
+    ${appearance()}
+
     <h2 class="section__title section__title--spaced">Preferences</h2>
     <section class="card form">
       <fieldset class="field"><legend>Weight unit</legend>${segmented("weightUnit", s.weightUnit, [["kg", "kg"], ["lb", "lb"]])}
         <p class="field__help">Existing logs are converted for display.</p></fieldset>
-      <fieldset class="field"><legend>Theme</legend>${segmented("theme", s.theme, [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</fieldset>
       <div class="field">
         <label for="set-goal">Weekly goal</label>
         <select id="set-goal" class="input" data-setting="weeklyGoal">
@@ -31,8 +80,11 @@ export function renderSettings(): string {
         </select>
         <p class="field__help">Shown on Today with your streak, and in the Sunday summary.</p>
       </div>
-      <fieldset class="field"><legend>Timer sounds</legend>${segmented("sound", s.sound ? "on" : "off", [["on", "On"], ["off", "Off"]])}
-        <p class="field__help">Beeps for warm-up, stretching and the end of your rest. The screen stays on while a timer runs.</p></fieldset>
+      <div class="field field--switch">
+        <label for="set-sound">Timer sounds</label>
+        <md-switch id="set-sound" icons ${s.sound ? "selected" : ""} data-setting="sound" aria-describedby="sound-help"></md-switch>
+        <p class="field__help" id="sound-help">Beeps for warm-up, stretching and the end of your rest. The screen stays on while a timer runs.</p>
+      </div>
     </section>
 
     <h2 class="section__title section__title--spaced">Reminders</h2>

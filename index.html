@@ -13,11 +13,19 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="manifest" href="manifest.webmanifest">
   <script>
-    // Apply the saved theme before first paint to avoid a flash.
-    try {
-      var t = localStorage.getItem("fitnessTracker.theme");
-      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
-    } catch (e) {}
+    // Apply the saved appearance before first paint to avoid a flash (see src/lib/theme.ts).
+    (function () {
+      var mode = "system", palette = "classic", darkOnly = { midnight: 1 };
+      try {
+        mode = localStorage.getItem("fitnessTracker.theme") || mode;
+        palette = localStorage.getItem("fitnessTracker.palette") || palette;
+      } catch (e) {}
+      if (!/^(classic|violet|ocean|forest|ember|midnight|contrast)$/.test(palette)) palette = "classic";
+      var dark = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches;
+      var h = document.documentElement;
+      h.setAttribute("data-palette", palette);
+      h.setAttribute("data-mode", darkOnly[palette] || mode === "dark" || (mode !== "light" && dark) ? "dark" : "light");
+    })();
   </script>
 </head>
 <body class="is-bare">

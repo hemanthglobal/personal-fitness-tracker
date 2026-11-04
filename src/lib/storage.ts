@@ -52,6 +52,9 @@ export function clearNamespace(key: string) {
 }
 
 /** Theme is read before first paint, so keep a copy outside the per-user namespace. */
-export function rememberTheme(theme: string) {
-  try { localStorage.setItem(`${BASE}.theme`, theme); } catch { /* ignore */ }
+export function rememberTheme(theme: string, palette: string) {
+  try {
+    localStorage.setItem(`${BASE}.theme`, theme);
+    localStorage.setItem(`${BASE}.palette`, palette);
+  } catch { /* ignore */ }
 }
